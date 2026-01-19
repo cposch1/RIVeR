@@ -46,7 +46,8 @@ def plot_camera_solution(frame_rgb, grp_dict, cam_solution, figsize=(15, 6)):
                 label='GRP Points')
 
     # Plot projected points
-    projected_points = cam_solution['projected_points']
+    #projected_points = cam_solution['projected_points']
+    projected_points = np.asarray(cam_solution['projected_points'])
     ax_pix.scatter(projected_points[:,0], projected_points[:,1],
                 marker='.',
                 c='#ED6B57',
