@@ -35,6 +35,7 @@ import matplotlib.pyplot as plt
 import cv2
 import json
 from tablib import Dataset
+import csv
 
 # Import RIVeR modules
 from river.core.compute_section import (
@@ -48,6 +49,7 @@ from river.core.coordinate_transform import transform_real_world_to_pixel
 # Set up paths
 frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
 bath_file = Path("data/bathymetry/ilh_section.csv")
+csv_cross_path = Path("results/ilh/cross_points.csv")
 transformation_file = Path("results/ilh/transformation.json")
 output_dir = Path("results/ilh")
 output_dir.mkdir(parents=True, exist_ok=True)
@@ -83,13 +85,31 @@ plt.show()
 # - Alpha coefficient (velocity correction factor)
 
 # %%
+# Load cross section point coordinates
+
+points_cross = []
+with open(csv_cross_path, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = float(row[0])
+        y = float(row[1])
+        points_cross.append((x, y))
+
+#point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
+#point_coords_pixel = dict(zip(point_img_keys, points_img))
+
+print(points_cross)
+
+# %%
 # Define initial cross-sections dictionary
 xsections = {
     "section1": {
-        "east_l": 4.04956047,      # Left bank easting
-        "north_l": 0.53993244,      # Left bank northing
-        "east_r": 17.09925611,      # Right bank easting
-        "north_r": 0.43758749,      # Right bank northing
+        "east_l": points_cross[0][0],      # Left bank easting
+        "north_l": points_cross[0][1],      # Left bank northing
+        "east_r": points_cross[1][0],      # Right bank easting
+        "north_r": points_cross[1][1],      # Right bank northing
         "level": 0.5,       # Water level
         "num_stations": 5,   # Number of analysis points
         "alpha": 1,           # Velocity correction coefficient
@@ -161,8 +181,8 @@ ax1.imshow(frame_rgb)
 ax1.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]], 
          [xsections["section1"]["yl"], xsections["section1"]["yr"]], 
          color='#F5BF61', linewidth=2)  # Line connecting points
-ax1.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=10)  # Left point
-ax1.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=10)  # Right point
+ax1.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=3)  # Left point
+ax1.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=3)  # Right point
 
 ax1.set_title('Cross-Section Location')
 ax1.axis('off')
@@ -182,7 +202,7 @@ ax2.legend()
 # Adjust layout
 plt.tight_layout()
 
-image_output_file = output_dir / "06_cross-sec_bath.png"
+image_output_file = output_dir / "05_cross-sec_bath.png"
 plt.savefig(str(image_output_file))
 plt.show()
 
