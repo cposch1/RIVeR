@@ -39,6 +39,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import cv2
 import json
+import csv
+import math
 
 # Import RIVeR modules using relative imports
 from river.core.coordinate_transform import (
@@ -49,6 +51,8 @@ from river.core.coordinate_transform import (
 
 # Set up paths 
 frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
+csv_img_path = Path("results/ilh/grps_img.csv")
+csv_real_path = Path("results/ilh/grps_real.csv")
 output_dir = Path("results/ilh")
 output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -68,6 +72,60 @@ plt.imshow(frame_rgb)
 plt.axis('off')
 plt.title('Original Frame')
 plt.show()
+
+# %%
+# Load image coordinates
+
+points_img = []
+with open(csv_img_path, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = int(float(row[0]))
+        y = int(float(row[1]))
+        points_img.append((x, y))
+
+point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
+point_coords_pixel = dict(zip(point_img_keys, points_img))
+
+print(point_coords_pixel)
+
+# %%
+# Load and calculate real-world coordinates
+
+points_real = []
+with open(csv_real_path, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = int(float(row[0]))
+        y = int(float(row[1]))
+        points_real.append((x, y))
+
+point_real_keys = [f"point{i}" for i in range(1, len(points_real) + 1)]
+point_coords_world = dict(zip(point_real_keys, points_real))
+
+print(point_coords_world)
+
+# function for calculating euclidian distances
+def dist(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+
+distances = {
+    'd12': dist(point_coords_world['point1'], point_coords_world['point2']),
+    'd23': dist(point_coords_world['point2'], point_coords_world['point3']),
+    'd34': dist(point_coords_world['point3'], point_coords_world['point4']),
+    'd41': dist(point_coords_world['point4'], point_coords_world['point1']),
+    'd13': dist(point_coords_world['point1'], point_coords_world['point3']),  # diagonal
+    'd24': dist(point_coords_world['point2'], point_coords_world['point4'])   # diagonal
+}
+
+print(distances)
 
 # %% [markdown]
 # ## Step 2: Define Ground Control Points (GCPs) and Visualize Transformation
@@ -100,22 +158,22 @@ plt.show()
 # %%
 # Example GRP coordinates (replace with your actual measurements)
 # Format: pixel coordinates (x, y) for 4 points forming a quadrilateral
-point_coords_pixel = {
-    'point1': (1498, 313),   # left-upstream
-    'point2': (1313, 146),  # right-upstream
-    'point3': (1084, 141), # left-downstream
-    'point4': (727, 395)   # left-downstream
-}
+#point_coords_pixel = {
+#    'point1': (1498, 313),   # left-upstream
+#    'point2': (1313, 146),  # right-upstream
+#    'point3': (1084, 141), # left-downstream
+#    'point4': (727, 395)   # left-downstream
+#}
 
 # Known distances between points in meters
-distances = {
-    'd12': 28.00,  # Distance between points 1 and 2
-    'd23': 12.21,   # Distance between points 2 and 3
-    'd34': 28.00,  # Distance between points 3 and 4
-    'd41': 12.21,   # Distance between points 4 and 1
-    'd13': 23.26,  # Diagonal distance between points 1 and 3
-    'd24': 36.40   # Diagonal distance between points 2 and 4
-}
+#distances = {
+#    'd12': 28.00,  # Distance between points 1 and 2
+#    'd23': 12.21,   # Distance between points 2 and 3
+#    'd34': 28.00,  # Distance between points 3 and 4
+#    'd41': 12.21,   # Distance between points 4 and 1
+#    'd13': 23.26,  # Diagonal distance between points 1 and 3
+#    'd24': 36.40   # Diagonal distance between points 2 and 4
+#}
 
 # Extract coordinates for transformation
 x1_pix, y1_pix = point_coords_pixel['point1']
@@ -161,9 +219,9 @@ ax1.plot([x1_pix, x3_pix], [y1_pix, y3_pix], color='#CC4BC2', linewidth=2)
 ax1.plot([x2_pix, x4_pix], [y2_pix, y4_pix], color='#7765E3', linewidth=2)
 # Plot points
 # Point 1 in red
-ax1.plot(x1_pix, y1_pix, 'o', color='#ED6B57', markersize=10)
+ax1.plot(x1_pix, y1_pix, 'o', color='#ED6B57', markersize=3)
 # Points 2-4 in blue
-ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color='#6CD4FF', markersize=10)
+ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color='#6CD4FF', markersize=3)
 ax1.axis('off')
 ax1.set_title('Original Image')  # Fixed from ax1.title to ax1.set_title
 
@@ -226,9 +284,9 @@ if 'transformed_img' in transformation and 'extent' in transformation:
     
     # Plot points
     # Point 1 in red
-    ax2.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=10)
+    ax2.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=3)
     # Points 2-4 in blue
-    ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='#6CD4FF', markersize=10)
+    ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='#6CD4FF', markersize=3)
     
     ax2.set_xlabel('East (m)')
     ax2.set_ylabel('North (m)')

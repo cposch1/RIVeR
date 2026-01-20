@@ -252,11 +252,11 @@ def onclick(event):
         
         n = len(points)
         if n == 1:
-            ax.plot(x, y, 'o', color='#ED6B57', markersize=10)  # first point red
+            ax.plot(x, y, 'o', color='#ED6B57', markersize=3)  # first point red
         elif n in (2, 3):
-            ax.plot(x, y, 'o', color='#6CD4FF', markersize=10)  # 2nd & 3rd blue
+            ax.plot(x, y, 'o', color='#6CD4FF', markersize=3)  # 2nd & 3rd blue
         elif n == 4:
-            ax.plot(x, y, 'o', color='#6CD4FF', markersize=10)  # 4th blue
+            ax.plot(x, y, 'o', color='#6CD4FF', markersize=3)  # 4th blue
             fig.canvas.draw()
             fig.canvas.mpl_disconnect(cid)
             print("4 points collected:", points)
@@ -268,7 +268,15 @@ plt.tight_layout()
 plt.show()
 
 # %%
-points
+print(points)
+csv_output_file = output_dir / "grps_img.csv"
+
+import csv
+
+with open(csv_output_file, "w", newline="") as f:
+    writer = csv.writer(f)
+    #writer.writerow(["x", "y"])   # header
+    writer.writerows(points)
 
 # %%
 image_output_file = output_dir / "01_orthorect_select.png"
