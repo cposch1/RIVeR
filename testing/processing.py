@@ -300,9 +300,6 @@ for vp in tqdm(list(iter_videos(video_dir)), desc="Extracting frames"):
 print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s).")
 
 
-# %% [markdown]
-# # Step 3: Orthrectification
-
 # %%
 # Function that constructs paths to frames
 def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
@@ -348,7 +345,10 @@ def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
 df_frames = collect_frame_paths(frames_dir)
 
 # %% [markdown]
-# ## Step 3.1: Define GCPs in imagery (repeat Step 3.1 for each station)
+# # Step 3: Orthrectification Setup
+
+# %% [markdown]
+# ### Repeat lines until "End of Step 3" for each station
 
 # %%
 #########################
@@ -493,7 +493,6 @@ def get_gcp_frame_paths(
         by_date.setdefault(d, []).append(str(Path(row["frame_path"]).as_posix()))
 
     # Return results aligned with input dates, using None when missing
-    
     check_results = []
     for d in norm_dates:
         paths_for_d = by_date.get(d, [])
@@ -540,12 +539,13 @@ with open(gcps_file, newline="") as f:
 
 point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
 point_coords_pixel = dict(zip(point_img_keys, points_img))
-print(point_coords_pixel)
+print(f"GCPs image coordinates:\n{point_coords_pixel}")
 
 # %%
 # Load GCP real world coordinates
 points_real = []
-with open(csv_real_path, newline="") as f:
+gcps_real_file = gcps_dir / f"{gcp_cam}_gcps_real.csv"
+with open(gcps_real_file, newline="") as f:
     reader = csv.reader(f)
     for row in reader:
         if not row:
@@ -557,14 +557,11 @@ with open(csv_real_path, newline="") as f:
 point_real_keys = [f"point{i}" for i in range(1, len(points_real) + 1)]
 point_coords_world = dict(zip(point_real_keys, points_real))
 
-print(point_coords_world)
-
 # function for calculating euclidian distances
 def dist(p1, p2):
     x1, y1 = p1
     x2, y2 = p2
     return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-
 
 distances = {
     'd12': dist(point_coords_world['point1'], point_coords_world['point2']),
@@ -574,16 +571,149 @@ distances = {
     'd13': dist(point_coords_world['point1'], point_coords_world['point3']),  # diagonal
     'd24': dist(point_coords_world['point2'], point_coords_world['point4'])   # diagonal
 }
-
+print("GCPs real world coordinates and distances:")
+print(point_coords_world)
 print(distances)
 
 # %%
-## load real world coordinates
-## save transformation
-## check orthrectification of ne image
+# Do test orthorectification and show/save test image
 
-# %% [markdown]
-# ### End of Step 3.1 (repeat for each station)
+# Extract coordinates for transformation
+x1_pix, y1_pix = point_coords_pixel['point1']
+x2_pix, y2_pix = point_coords_pixel['point2']
+x3_pix, y3_pix = point_coords_pixel['point3']
+x4_pix, y4_pix = point_coords_pixel['point4']
+
+# Calculate transformation matrix
+transformation = oblique_view_transformation_matrix(
+    x1_pix, y1_pix,
+    x2_pix, y2_pix,
+    x3_pix, y3_pix,
+    x4_pix, y4_pix,
+    distances['d12'],
+    distances['d23'],
+    distances['d34'],
+    distances['d41'],
+    distances['d13'],
+    distances['d24'],
+    image_path=frame_path,
+)
+
+transformation_matrix = transformation['transformation_matrix']
+
+# Visualize the points on the frame
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+
+# First subplot with original image and control points
+ax1.imshow(img)
+# Draw lines with specific colors
+# Line 1-2
+ax1.plot([x1_pix, x2_pix], [y1_pix, y2_pix], color='#6CD4FF', linewidth=2)
+# Line 2-3
+ax1.plot([x2_pix, x3_pix], [y2_pix, y3_pix], color='#62C655', linewidth=2)
+# Line 3-4
+ax1.plot([x3_pix, x4_pix], [y3_pix, y4_pix], color='#ED6B57', linewidth=2)
+# Line 4-1
+ax1.plot([x4_pix, x1_pix], [y4_pix, y1_pix], color='#F5BF61', linewidth=2)
+# Diagonal 1-3
+ax1.plot([x1_pix, x3_pix], [y1_pix, y3_pix], color='#CC4BC2', linewidth=2)
+# Diagonal 2-4
+ax1.plot([x2_pix, x4_pix], [y2_pix, y4_pix], color='#7765E3', linewidth=2)
+# Plot points
+# Point 1 in red
+ax1.plot(x1_pix, y1_pix, 'o', color='#ED6B57', markersize=3)
+# Points 2-4 in blue
+ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color='#6CD4FF', markersize=3)
+ax1.axis('off')
+ax1.set_title('Original Image')  # Fixed from ax1.title to ax1.set_title
+
+# Second subplot with orthorectified image
+if 'transformed_img' in transformation and 'extent' in transformation:
+    extent = transformation['extent']
+    ax2.imshow(transformation['transformed_img'], extent=extent)
+    
+    # Add scale bar
+    # Calculate appropriate scale length
+    map_width = extent[1] - extent[0]
+    magnitude = 10 ** np.floor(np.log10(map_width * 0.2))
+    scale_length = np.round(map_width * 0.2 / magnitude) * magnitude
+    scale_length_rounded = int(scale_length) if scale_length < 10 else scale_length
+    
+    # Define scale bar position (in data coordinates)
+    margin = (extent[1] - extent[0]) * 0.05  # 5% margin from edges
+    bar_height = (extent[3] - extent[2]) * 0.015  # Height of bar
+    x_pos = extent[1] - margin - scale_length_rounded
+    y_pos = extent[2] + margin
+    
+    # Add scale bar
+    rect = Rectangle((x_pos, y_pos), scale_length_rounded, bar_height,
+                     fc='white', ec='black')
+    ax2.add_patch(rect)
+    
+    # Add text label for the scale bar
+    ax2.text(x_pos + scale_length_rounded/2, y_pos + 2*bar_height,
+            f'{int(scale_length_rounded)} m',
+            ha='center', va='bottom', fontsize=9,
+            bbox=dict(facecolor='white', alpha=0.7, pad=2))
+    
+    # Convert GCP pixel coordinates to real-world coordinates to display in the second image
+    real_world_points = []
+    for x, y in [(x1_pix, y1_pix), (x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix)]:
+        rw_point = transform_pixel_to_real_world(x, y, transformation_matrix)
+        real_world_points.append(rw_point)
+    
+    real_world_points = np.array(real_world_points)
+    
+    # Get individual point coordinates
+    x1_rw, y1_rw = real_world_points[0]
+    x2_rw, y2_rw = real_world_points[1]
+    x3_rw, y3_rw = real_world_points[2]
+    x4_rw, y4_rw = real_world_points[3]
+    
+    # Draw lines with the same colors as in the first plot
+    # Line 1-2
+    ax2.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#6CD4FF', linewidth=2)
+    # Line 2-3
+    ax2.plot([x2_rw, x3_rw], [y2_rw, y3_rw], color='#62C655', linewidth=2)
+    # Line 3-4
+    ax2.plot([x3_rw, x4_rw], [y3_rw, y4_rw], color='#ED6B57', linewidth=2)
+    # Line 4-1
+    ax2.plot([x4_rw, x1_rw], [y4_rw, y1_rw], color='#F5BF61', linewidth=2)
+    # Diagonal 1-3
+    ax2.plot([x1_rw, x3_rw], [y1_rw, y3_rw], color='#CC4BC2', linewidth=2)
+    # Diagonal 2-4
+    ax2.plot([x2_rw, x4_rw], [y2_rw, y4_rw], color='#7765E3', linewidth=2)
+    
+    # Plot points
+    # Point 1 in red
+    ax2.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=3)
+    # Points 2-4 in blue
+    ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='#6CD4FF', markersize=3)
+    
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_title('Orthorectified Image')
+
+plt.tight_layout()
+
+ortho_check_file = gcps_dir / (f"{gcp_cam}_ortho_check_{ch_dat}_{ch_clo}.png")
+plt.savefig(str(ortho_check_file))
+plt.show()
+#plt.close(fig)
 
 # %%
-## Step 3.2.: Perform orthorectification
+# Save transformation
+transf_file = gcps_dir / (f"{gcp_cam}_transform_{ch_dat}_{ch_clo}.json")
+with open(transf_file, 'w') as f:
+    json.dump(transformation_matrix, f, indent=1)
+print(f"Transformation matrix saved to\n{transf_file}")
+
+# Save raw orthorectified image
+#ortho_file = gcps_dir / (f"{gcp_cam}_orthorect_{ch_dat}_{ch_clo}.png")
+#plt.imsave(str(ortho_file), transformation['transformed_img'])
+
+# %% [markdown]
+# ### End of Step 3 (repeat for each station)
+
+# %%
+## Step 4: Loop through cross section selection
