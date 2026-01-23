@@ -48,7 +48,7 @@ from river.core.coordinate_transform import transform_real_world_to_pixel
 
 # Set up paths
 frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
-bath_file = Path("data/bathymetry/ilh_section.csv")
+bath_file = Path("data/bathymetry/ilh_bath.csv")
 csv_cross_path = Path("results/ilh/cross_points.csv")
 transformation_file = Path("results/ilh/transformation.json")
 output_dir = Path("results/ilh")
@@ -102,15 +102,49 @@ with open(csv_cross_path, newline="") as f:
 
 print(points_cross)
 
+x_le = points_cross[0][0]
+y_le = points_cross[0][1]
+x_ri = points_cross[1][0]
+y_ri = points_cross[1][1]
+
+# %%
+# Define bathymetry
+lvl = 0.2
+
+le_bath = x_le - x_le
+ri_bath = x_ri - x_le
+mid_bath = ri_bath/2
+
+
+import numpy as np
+
+xL = le_bath
+xM = mid_bath
+xR = ri_bath
+lvl = lvl
+
+def p(x):
+    return lvl * (x - xM)**2 / ((xL - xM)*(xR - xM)) * (-1)
+
+xs = np.linspace(xL, xR, 15)
+points = [(float(x), float(p(x))) for x in xs]
+
+
+# Write CSV
+with open(bath_file, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["d", "h"])   # headers
+    writer.writerows(points)      # the data rows
+
 # %%
 # Define initial cross-sections dictionary
 xsections = {
     "section1": {
-        "east_l": points_cross[0][0],      # Left bank easting
-        "north_l": points_cross[0][1],      # Left bank northing
-        "east_r": points_cross[1][0],      # Right bank easting
-        "north_r": points_cross[1][1],      # Right bank northing
-        "level": 0.5,       # Water level
+        "east_l": x_le,      # Left bank easting
+        "north_l": y_le,      # Left bank northing
+        "east_r": x_ri,      # Right bank easting
+        "north_r": y_ri,      # Right bank northing
+        "level": lvl,       # Water level
         "num_stations": 5,   # Number of analysis points
         "alpha": 1,           # Velocity correction coefficient
         "bath": str(bath_file),  # Path to bathymetry file

@@ -45,8 +45,8 @@ from river.core.piv_pipeline import (
     run_analyze_all
 )
 # Set up paths
-frame_dir = Path("data/frames/ilh-cam1")
-frame_path = Path("data/frames/ilh-cam1/0000000000.jpg")
+frame_dir = Path("data/frames/ilh_20250426-200000-205900")
+frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
 transformation_file = Path("results/ilh/transformation.json")
 xsections_file = Path("results/ilh/section.json")
 output_dir = Path("results/ilh")
@@ -186,7 +186,7 @@ plt.title('Frame with Analysis Region and Mask')
 plt.axis('off')
 plt.tight_layout()
 
-image_output_file = output_dir / "07_analysis_mask.png"
+image_output_file = output_dir / "06_analysis_mask.png"
 plt.savefig(str(image_output_file))
 
 plt.show()
