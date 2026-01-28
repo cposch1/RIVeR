@@ -345,7 +345,7 @@ def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
 df_frames = collect_frame_paths(frames_dir)
 
 # %% [markdown]
-# # Step 3: Orthrectification Setup
+# # Step 3: Orthrectification
 
 # %% [markdown]
 # ### Repeat lines until "End of Step 3" for each station
@@ -355,36 +355,40 @@ df_frames = collect_frame_paths(frames_dir)
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "le5-cam1-pt"
+gcp_cam = "ilh-cam1-pt"
 gcp_date = "20250426"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
 
-# Load the image path
-clock_exact = gcp_time+"-"+str(int(gcp_time)+5900)
-df_sub = df_frames[
-    (df_frames["camera"] == gcp_cam) &
-    (df_frames["date"] == gcp_date) &
-    (df_frames["clock"] == clock_exact)
-].copy()
+# Function that loads the frame image
+def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
+    clock_exact = gcp_time+"-"+str(int(gcp_time)+5900)
+    df_sub = df_frames[
+        (df_frames["camera"] == gcp_cam) &
+        (df_frames["date"] == gcp_date) &
+        (df_frames["clock"] == clock_exact)
+    ].copy()
+    
+    if df_sub.empty:
+        raise FileNotFoundError("Camera/date/time not valid")
+    
+    df_sub["basename"] = (
+        df_sub["frame_path"]
+        .astype(str)
+        .str.replace("\\", "/", regex=False)
+        .apply(lambda p: Path(p).name.lower())
+    )
+    hits = df_sub[df_sub["basename"].eq("0000000000.jpg")]
+    if hits.empty:
+        raise FileNotFoundError("No '0000000000.jpg' in that segment")
+    
+    frame_path = str(Path(hits.iloc[0]["frame_path"]).as_posix())
+    frame = cv2.imread(str(frame_path))
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return frame, frame_rgb, frame_path
 
-if df_sub.empty:
-    raise FileNotFoundError("Camera/date/time not valid")
-
-df_sub["basename"] = (
-    df_sub["frame_path"]
-    .astype(str)
-    .str.replace("\\", "/", regex=False)
-    .apply(lambda p: Path(p).name.lower())
-)
-hits = df_sub[df_sub["basename"].eq("0000000000.jpg")]
-if hits.empty:
-    raise FileNotFoundError("No '0000000000.jpg' in that segment")
-
-frame_path = str(Path(hits.iloc[0]["frame_path"]).as_posix())
-frame = cv2.imread(str(frame_path))
-frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+frame, frame_rgb, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
 
 # %%
 # Display image and select GCPs
@@ -396,7 +400,7 @@ img = mpimg.imread(str(frame_path))
 
 points = []
 
-fig, ax = plt.subplots(figsize=(18,9))
+fig, ax = plt.subplots(figsize=(14,10))
 ax.imshow(img)
 ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{frame_path}")
 plt.axis("off")
@@ -424,6 +428,12 @@ def onclick(event):
 cid = fig.canvas.mpl_connect('button_press_event', onclick)
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# ### Select GCPs in the displayed picture above
+
+# %%
+raise SystemExit
 
 # %%
 # Save GCP image coordinates
@@ -602,7 +612,7 @@ transformation = oblique_view_transformation_matrix(
 transformation_matrix = transformation['transformation_matrix']
 
 # Visualize the points on the frame
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 # First subplot with original image and control points
 ax1.imshow(img)
@@ -715,5 +725,178 @@ print(f"Transformation matrix saved to\n{transf_file}")
 # %% [markdown]
 # ### End of Step 3 (repeat for each station)
 
+# %% [markdown]
+# # Step 4: Cross Section Selection
+
 # %%
-## Step 4: Loop through cross section selection
+# %matplotlib widget
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import numpy as np
+from PIL import Image
+from ipywidgets import FloatSlider, VBox, Label, HBox
+
+plt.ioff()  # 🔴 prevent Matplotlib auto-displaying the figure
+
+###################################################
+gcp_cam = "ilh-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+img1 = mpimg.imread(str(frame_path))
+###################################################
+gcp_cam = "le5-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+img2 = mpimg.imread(str(frame_path))
+###################################################
+
+# --- Plot with alpha slider ---
+
+fig, ax = plt.subplots(figsize=(14, 8))
+ax.set_title("Overlay comparison (foreground opacity)")
+ax.axis("off")
+
+bg = ax.imshow(img1)
+fg = ax.imshow(img2, alpha=0.5)  # start half transparent
+
+alpha_slider = FloatSlider(
+    value=0.5, min=0.0, max=1.0, step=0.01,
+    description='Date 1', continuous_update=True, readout=False
+)
+
+def on_alpha_change(change):
+    fg.set_alpha(change['new'])
+    fig.canvas.draw_idle()
+
+alpha_slider.observe(on_alpha_change, names='value')
+alpha_label = Label("Date 2")
+slider_row = HBox([alpha_slider, alpha_label])
+
+
+ui = VBox([slider_row, fig.canvas])
+display(ui)  # ✅ show exactly once
+
+
+# %%
+# Load transformation matrix
+with open(transf_file, 'r') as f:
+    transformation_matrix = np.array(json.load(f))
+
+# %%
+transformation
+
+# %%
+transformation_matrix
+
+# %%
+# %matplotlib widget
+
+plt.close()
+plt.figure(figsize=(14, 10))
+ax = plt.gca()
+
+
+extent = transformation['extent']
+ax.imshow(transformation['transformed_img'], extent=extent)
+
+# Add scale bar
+# Calculate appropriate scale length
+map_width = extent[1] - extent[0]
+magnitude = 10 ** np.floor(np.log10(map_width * 0.2))
+scale_length = np.round(map_width * 0.2 / magnitude) * magnitude
+scale_length_rounded = int(scale_length) if scale_length < 10 else scale_length
+
+# Define scale bar position (in data coordinates)
+margin = (extent[1] - extent[0]) * 0.05  # 5% margin from edges
+bar_height = (extent[3] - extent[2]) * 0.015  # Height of bar
+x_pos = extent[1] - margin - scale_length_rounded
+y_pos = extent[2] + margin
+
+# Add scale bar
+rect = Rectangle((x_pos, y_pos), scale_length_rounded, bar_height,
+                 fc='white', ec='black')
+ax.add_patch(rect)
+
+# Add text label for the scale bar
+ax.text(x_pos + scale_length_rounded/2, y_pos + 2*bar_height,
+        f'{int(scale_length_rounded)} m',
+        ha='center', va='bottom', fontsize=9,
+        bbox=dict(facecolor='white', alpha=0.7, pad=2))
+
+
+ax.set_xlabel('East (m)')
+ax.set_ylabel('North (m)')
+ax.set_title('Cross-section selection in orthorectified image')
+
+#plt.tight_layout()
+
+#mage_output_file = output_dir / "05_cross_sec_orthorect.png"
+#plt.savefig(str(image_output_file))
+
+# --- Interactive picking of two points in real-world coordinates ---
+points_rw = []
+point_coords_rw = {}  # {'point1': (x1, y1), 'point2': (x2, y2)}
+
+# We'll store the variables you used in your other code:
+x1_rw = y1_rw = x2_rw = y2_rw = None
+
+def onclick(event):
+    nonlocal_vars = ('x1_rw', 'y1_rw', 'x2_rw', 'y2_rw', 'point_coords_rw')  # for clarity in this cell
+    # In a notebook cell, use 'global' to assign to top-level names:
+    global x1_rw, y1_rw, x2_rw, y2_rw, point_coords_rw
+
+    # Only react to clicks inside the axes with valid data coordinates
+    if (event.inaxes is not ax) or (event.xdata is None) or (event.ydata is None):
+        return
+
+    x, y = float(event.xdata), float(event.ydata)
+    print(f"Clicked at: East={x:.3f} m, North={y:.3f} m")
+    points_rw.append((x, y))
+
+    # First point (left bank) — plot red marker
+    if len(points_rw) == 1:
+        x1_rw, y1_rw = points_rw[0]
+        ax.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=3, zorder=4)
+        fig.canvas.draw_idle()
+
+    # Second point (right bank) — plot green marker, draw the connecting line, disconnect
+    elif len(points_rw) == 2:
+        x2_rw, y2_rw = points_rw[1]
+        ax.plot(x2_rw, y2_rw, 'o', color='#62C655', markersize=3, zorder=4)
+        # Draw line connecting the two banks
+        ax.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#F5BF61', linewidth=2, zorder=4)
+
+        # Save into a dict for clean access
+        point_coords_rw = {
+            (x1_rw, y1_rw),
+            (x2_rw, y2_rw),
+        }
+
+        print("2 points collected (real-world coords):")
+        print(point_coords_rw)
+
+        # Disconnect the event handler after two points
+        fig.canvas.mpl_disconnect(cid)
+        fig.canvas.draw_idle()
+
+        # --- Optional: save figure automatically once selected ---
+        # image_output_file = output_dir / "05_cross_sec_orthorect_picked.png"
+        # fig.savefig(str(image_output_file), dpi=150, bbox_inches='tight')
+        # print(f"Saved: {image_output_file}")
+
+# Connect the callback
+cid = ax.figure.canvas.mpl_connect('button_press_event', onclick)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+point_coords_rw
+
+# %%
