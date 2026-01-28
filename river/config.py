@@ -18,7 +18,8 @@ import pandas as pd
 import re
 from IPython.display import display
 from tablib import Dataset
-
+from PIL import Image
+from ipywidgets import FloatSlider, VBox, Label, HBox
 
 # ---- Helpers ---------------------------------------------------------------
 

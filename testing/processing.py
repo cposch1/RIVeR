@@ -96,7 +96,6 @@ def scan_videos_and_write_csvs(
         date = m.group("date")
         clock_start = m.group("start")
         clock_end = m.group("end")
-        clock = f"{clock_start}-{clock_end}"
 
         # Extract video info; on error, log to per-camera error CSV accumulator
         try:
@@ -105,7 +104,8 @@ def scan_videos_and_write_csvs(
         except Exception as e:
             errors_per_camera.setdefault(camera, []).append({
                 "date": date,
-                "clock": clock,
+                "clock_start": clock_start,
+                "clock_end": clock_end,
                 "error_message": str(e),
                 "estimated_size_gb": round(os.path.getsize(path) / (1024**3),2),
                 "path": str(path.relative_to(videos_root)),
@@ -114,7 +114,8 @@ def scan_videos_and_write_csvs(
 
         row = {
             "date": date,
-            "clock": clock,  # combined as requested; if you want separate cols, add them too
+            "clock_start": clock_start,
+            "clock_end": clock_end,
             "total_frames": info["total_frames"],
             "fps": info["fps"],
             "resolution": info["resolution"],
@@ -127,7 +128,7 @@ def scan_videos_and_write_csvs(
     camera_to_csv = {}
     for camera, rows in rows_per_camera.items():
         # Sort by date then start time inside 'clock'
-        rows.sort(key=lambda r: (r["date"], r["clock"]))
+        rows.sort(key=lambda r: (r["date"], r["clock_start"]))
 
         csv_path = video_dir / f"_{camera}_meta.csv"
         camera_to_csv[camera] = csv_path
@@ -137,7 +138,7 @@ def scan_videos_and_write_csvs(
         with csv_path.open(mode, newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["date", "clock", "total_frames", "fps", "resolution", "estimated_size_gb", "path"],
+                fieldnames=["date", "clock_start", "clock_end", "total_frames", "fps", "resolution", "estimated_size_gb", "path"],
             )
             if write_header:
                 writer.writeheader()
@@ -147,7 +148,7 @@ def scan_videos_and_write_csvs(
     err_to_csv = {}
     for camera, rows in errors_per_camera.items():
         # Sort by date then clock for consistency
-        rows.sort(key=lambda r: (r["date"], r["clock"]))
+        rows.sort(key=lambda r: (r["date"], r["clock_start"]))
 
         err_csv_path = video_dir / f"_{camera}_error_log.csv"
         err_to_csv[camera] = err_csv_path
@@ -157,7 +158,7 @@ def scan_videos_and_write_csvs(
         with err_csv_path.open(mode, newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["date", "clock", "error_message", "estimated_size_gb", "path"],
+                fieldnames=["date", "clock_start", "clock_end", "error_message", "estimated_size_gb", "path"],
             )
             if write_header:
                 writer.writeheader()
@@ -184,6 +185,11 @@ print(f"DONE.\n\nFollowing metadata files have been created:\n{camera_csvs}\n\nF
 # - `chunk_size`: Number of frames per processing chunk (affects memory usage)
 
 # %%
+import re
+import csv
+from pathlib import Path
+from tqdm import tqdm
+
 #########################
 ### DEFINE PARAMETERS ###
 #########################
@@ -192,41 +198,38 @@ start_frame_number = 0
 end_frame_number = None    # process all frames
 every = 25 
 
-#########################
+###############################################
 
-# File parsing
+# File parsing: match "<camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>.<ext>"
+# Use greedy camera group to capture everything up to the last "_" before the date.
 VID_NAME_RE = re.compile(
-    r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})\.(?P<ext>avi|mp4)$',
+    r'^(?P<camera>.+)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})\.(?P<ext>avi|mp4)$',
     re.IGNORECASE
 )
 
-# Function that gets video names
 def parse_video_name(video_path: Path):
     """
-    Parse the video filename and return (camera, date, clock)
-    where clock is 'hhmmss-hhmmss'.
+    Parse the video filename and return (camera, date, clock_start, clock_end).
     """
     m = VID_NAME_RE.match(video_path.name)
     if not m:
         raise ValueError(f"Video filename does not match expected pattern: {video_path.name}")
     camera = m.group("camera")
     date = m.group("date")
-    start = m.group("start")
-    end = m.group("end")
-    clock = f"{start}-{end}"
-    return camera, date, clock
+    clock_start = m.group("start")
+    clock_end = m.group("end")
+    return camera, date, clock_start, clock_end
 
 
-# Function that creates directories
 def target_frames_dir_for(video_path: Path, base_frames_dir: Path) -> Path:
     """
-    frames/<camera>/<date>/<clock>/
+    frames/<camera>/<date>/<clock_start>-<clock_end>/
     """
-    camera, date, clock = parse_video_name(video_path)
-    return base_frames_dir / camera / date / clock
+    camera, date, clock_start, clock_end = parse_video_name(video_path)
+    clock_segment = f"{clock_start}-{clock_end}"
+    return base_frames_dir / camera / date / clock_segment
 
 
-# Function that loops over videos (skipping AppleDouble artifacts)
 def iter_videos(root: Path, suffixes=(".avi", ".mp4")):
     root = Path(root)
     for p in root.rglob("*"):
@@ -240,45 +243,88 @@ def iter_videos(root: Path, suffixes=(".avi", ".mp4")):
             yield p
 
 
-# Function that extracts only valid videos
-def load_allowed_from_meta(video_root: Path) -> set[tuple[str, str, str]]:
-    allowed = set()
+def load_allowed_from_meta(video_root: Path) -> set[tuple[str, str, str, str]]:
+    """
+    Reads per-camera meta TSV/CSV files (_{camera}_meta.csv) and returns a set of
+    (camera, date, clock_start, clock_end). Detects delimiter (comma, semicolon, tab, pipe),
+    trims whitespace, and handles UTF-8 BOM.
+
+    Expected headers: date, clock_start, clock_end
+    """
+    allowed: set[tuple[str, str, str, str]] = set()
     video_root = Path(video_root)
-    for meta_csv in video_root.glob("_*_meta.csv"):
+
+    # Use rglob in case meta files are in subfolders
+    for meta_csv in video_root.rglob("_*_meta.csv"):
         name = meta_csv.name
-        # Ensure pattern _{camera}_meta.csv
         if not (name.startswith("_") and name.endswith("_meta.csv")):
             continue
-        camera = name[1:-9]  # remove 1 char "_" and 9 chars "_meta.csv"
 
-        with meta_csv.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
+        camera = name[1:-9]  # remove leading "_" and trailing "_meta.csv"
+
+        with meta_csv.open("r", newline="", encoding="utf-8-sig") as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            except csv.Error:
+                # Fallback to comma
+                dialect = csv.excel
+
+            reader = csv.DictReader(f, dialect=dialect)
+
+            # Normalize header variants (some editors truncate or rename headers)
+            # We'll map keys we care about to canonical names.
+            # Build a case-insensitive header map.
+            if reader.fieldnames is None:
+                continue
+            key_map = { (h or "").strip().lower(): h for h in reader.fieldnames }
+
+            def get(row, *keys):
+                for k in keys:
+                    src = key_map.get(k)
+                    if src and row.get(src) is not None:
+                        return row[src]
+                return None
+
             for row in reader:
-                date = row.get("date")
-                clock = row.get("clock")
-                if not date or not clock:
+                date = (get(row, "date") or "").strip()
+                clock_start = (get(row, "clock_start", "clock_sta") or "").strip()
+                clock_end   = (get(row, "clock_end") or "").strip()
+
+                if not date or not clock_start or not clock_end:
                     continue
-                allowed.add((camera, date, clock))
+
+                allowed.add((camera, date, clock_start, clock_end))
     return allowed
 
 
-# Extracting frames from valid videos that appear in the metadata list
-allowed_triples = load_allowed_from_meta(video_dir)
+# ---------- Main extraction ----------
+
+allowed_quads = load_allowed_from_meta(video_dir)
+print(f"Loaded {len(allowed_quads)} allowed entries.")
 
 processed = 0
 skipped = 0
 
+# Optional: quick debug dump if nothing loaded
+if not allowed_quads:
+    print("WARNING: No allowed entries found. Check delimiter/headers in meta files.")
+
 for vp in tqdm(list(iter_videos(video_dir)), desc="Extracting frames"):
     # Only process videos that are present in per-camera meta CSVs
     try:
-        camera, date, clock = parse_video_name(vp)
+        camera, date, clock_start, clock_end = parse_video_name(vp)
     except ValueError:
-        # Filename not matching the convention won't be in metadata anyway
         skipped += 1
         continue
 
-    if (camera, date, clock) not in allowed_triples:
+    key = (camera, date, clock_start, clock_end)
+    if key not in allowed_quads:
         skipped += 1
+        # Uncomment for targeted debugging of first few mismatches:
+        # if skipped <= 5:
+        #     print("Not in metadata:", key)
         continue
 
     dest = target_frames_dir_for(vp, frames_dir)
@@ -286,14 +332,14 @@ for vp in tqdm(list(iter_videos(video_dir)), desc="Extracting frames"):
 
     extract_config = {
         "video_path": vp,
-        "frames_dir": dest,          # hierarchical destination (camera/date/clock)
+        "frames_dir": dest,          # hierarchical destination (camera/date/clock_start/clock_end)
         "start_frame_number": start_frame_number,
         "end_frame_number": end_frame_number,    # process all frames
-        "every": every,                 # keep your sampling
+        "every": every,               # sampling
         "overwrite": False
     }
 
-    # Do NOT catch errors here—let them raise if something is wrong
+    # Let errors bubble up if something is wrong in extraction
     _first_frame = video_to_frames(**extract_config)
     processed += 1
 
@@ -311,36 +357,38 @@ def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
     and returns a DataFrame with columns:
         camera, date, clock, frame_path
     """
-    all_rows = []
+    
 
     frame_dir = frame_dir.resolve()
+    print(frame_dir)
 
-    # Loop structure: camera → date → clock → frames
+    rows = []
+
+    # Loop structure: camera → date → clock_segment → frames
     for camera_dir in frame_dir.iterdir():
-        if not camera_dir.is_dir():
-            continue
         camera = camera_dir.name
 
         for date_dir in camera_dir.iterdir():
-            if not date_dir.is_dir():
-                continue
             date = date_dir.name  # expect YYYYMMDD
 
-            for clock_dir in date_dir.iterdir():
-                if not clock_dir.is_dir():
-                    continue
-                clock = clock_dir.name  # expect hhmmss-hhmmss
+            for clock_dir in date_dir.iterdir():                   
+                parts = clock_dir.name.split("-")
+                clock_start, clock_end = parts
 
-                # Now collect all JPG files in this folder
+                # Collect all JPG frames in this folder
                 for jpg in clock_dir.glob("*.jpg"):
-                    all_rows.append({
+                    frame_path = jpg.resolve()
+                    rows.append({
                         "camera": camera,
                         "date": date,
-                        "clock": clock,
-                        "frame_path": jpg.relative_to(frame_dir.parent.parent)
+                        "clock_start": clock_start,
+                        "clock_end": clock_end,
+                        "frame_path": frame_path
                     })
 
-    return pd.DataFrame(all_rows)
+    df = pd.DataFrame(rows, columns=["camera", "date", "clock_start", "clock_end", "frame_path"])
+
+    return df
 
 df_frames = collect_frame_paths(frames_dir)
 
@@ -355,7 +403,7 @@ df_frames = collect_frame_paths(frames_dir)
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "ilh-cam1-pt"
+gcp_cam = "le5-cam1-pt"
 gcp_date = "20250426"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
@@ -363,11 +411,10 @@ gcp_time = "120000"           # in format HHMMSS
 
 # Function that loads the frame image
 def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
-    clock_exact = gcp_time+"-"+str(int(gcp_time)+5900)
     df_sub = df_frames[
         (df_frames["camera"] == gcp_cam) &
         (df_frames["date"] == gcp_date) &
-        (df_frames["clock"] == clock_exact)
+        (df_frames["clock_start"] == gcp_time)
     ].copy()
     
     if df_sub.empty:
@@ -415,10 +462,14 @@ def onclick(event):
         n = len(points)
         if n == 1:
             ax.plot(x, y, 'o', color='#ED6B57', markersize=3)  # first point red
+            ax.text(x, y, "1", color='#ED6B57', fontsize=8, ha='left', va='bottom')
         elif n in (2, 3):
             ax.plot(x, y, 'o', color='#6CD4FF', markersize=3)  # 2nd & 3rd blue
+            ax.text(x, y, str(n), color='#6CD4FF', fontsize=8, ha='left', va='bottom')
         elif n == 4:
             ax.plot(x, y, 'o', color='#6CD4FF', markersize=3)  # 4th blue
+            ax.text(x, y, str(n), color='#6CD4FF', fontsize=8, ha='left', va='bottom')
+            
             fig.canvas.draw()
             fig.canvas.mpl_disconnect(cid)
             print("4 points collected:", points)
@@ -442,13 +493,13 @@ if points == []:
 else:
     print(f"Selected image coordinates (X/Y):\n{points}")
 
-    gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{clock_exact}.csv")
+    gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
     with open(gcps_file, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(points)
     print(f"\nImage coordinates saved to:\n{gcps_file}")
     
-    gcps_img = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{clock_exact}_main.png")
+    gcps_img = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}_00_main.png")
     plt.savefig(str(gcps_img))
     plt.close()
     print(f"\nImage coordinates selection saved to:\n{gcps_img}")
@@ -482,7 +533,7 @@ def get_gcp_frame_paths(
     df_check = df_frames[
         (df_frames["camera"] == camera) &
         (df_frames["date"].astype(str).isin(norm_dates)) &
-        (df_frames["clock"] == check_clock_exact)
+        (df_frames["clock_start"] == gcp_check_time)
     ].copy()
 
     # Compute lowercase basenames
@@ -508,7 +559,7 @@ def get_gcp_frame_paths(
         paths_for_d = by_date.get(d, [])
         check_results.append({
             "date": d,
-            "clock": clock_exact,
+            "clock_start": clock_start,
             "frame_path": paths_for_d[0] if paths_for_d else None
         })
     
@@ -520,16 +571,18 @@ check_results = get_gcp_frame_paths(df_frames, gcp_cam, gcp_check_dates, gcp_che
 print("Following auxiliary imagery has been exported:")
 
 # Save auxiliary imagery
-for ch_dat, ch_clo, ch_pat in zip(check_results.date,check_results.clock,check_results.frame_path):
+n_aux = 1
+for ch_dat, ch_clo, ch_pat in zip(check_results.date,check_results.clock_start,check_results.frame_path):
     img = mpimg.imread(str(ch_pat))
     plt.close()
-    fig, ax = plt.subplots(figsize=(18, 9))
+    fig, ax = plt.subplots(figsize=(14, 10))
     ax.imshow(img)
     ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{ch_pat}")
     ax.axis("off")
     plt.tight_layout()
     
-    check_img = gcps_dir / (f"{gcp_cam}_gcps_img_{ch_dat}_{ch_clo}_aux.png")
+    check_img = gcps_dir / (f"{gcp_cam}_gcps_img_{ch_dat}_{ch_clo}_{n_aux:02d}_aux.png")
+    n_aux = n_aux + 1
     print(check_img)
     fig.savefig(str(check_img))
     plt.close()
@@ -538,6 +591,7 @@ for ch_dat, ch_clo, ch_pat in zip(check_results.date,check_results.clock,check_r
 # %%
 # Load GCP image coordinates
 points_img = []
+gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
 with open(gcps_file, newline="") as f:
     reader = csv.reader(f)
     for row in reader:
@@ -581,9 +635,11 @@ distances = {
     'd13': dist(point_coords_world['point1'], point_coords_world['point3']),  # diagonal
     'd24': dist(point_coords_world['point2'], point_coords_world['point4'])   # diagonal
 }
-print("GCPs real world coordinates and distances:")
+distances_print = {name: round(value, 2) for name, value in distances.items()}
+
+print("GCPs real world coordinates (X/Y) and distances (m):")
 print(point_coords_world)
-print(distances)
+print(distances_print)
 
 # %%
 # Do test orthorectification and show/save test image
@@ -629,11 +685,16 @@ ax1.plot([x4_pix, x1_pix], [y4_pix, y1_pix], color='#F5BF61', linewidth=2)
 ax1.plot([x1_pix, x3_pix], [y1_pix, y3_pix], color='#CC4BC2', linewidth=2)
 # Diagonal 2-4
 ax1.plot([x2_pix, x4_pix], [y2_pix, y4_pix], color='#7765E3', linewidth=2)
+
 # Plot points
 # Point 1 in red
 ax1.plot(x1_pix, y1_pix, 'o', color='#ED6B57', markersize=3)
+ax1.text(x1_pix, y1_pix, "1", color='#ED6B57', fontsize=8, ha='left', va='bottom')
 # Points 2-4 in blue
 ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color='#6CD4FF', markersize=3)
+pts = [(x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix)]
+[ax1.text(x, y, str(i), color='#6CD4FF', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
+
 ax1.axis('off')
 ax1.set_title('Original Image')  # Fixed from ax1.title to ax1.set_title
 
@@ -697,8 +758,11 @@ if 'transformed_img' in transformation and 'extent' in transformation:
     # Plot points
     # Point 1 in red
     ax2.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=3)
+    ax2.text(x1_rw, y1_rw, "1", color='#ED6B57', fontsize=8, ha='left', va='bottom')
     # Points 2-4 in blue
     ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='#6CD4FF', markersize=3)
+    pts = [(x2_rw, y2_rw), (x3_rw, y3_rw), (x4_rw, y4_rw)]
+    [ax2.text(x, y, str(i), color='#6CD4FF', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
     
     ax2.set_xlabel('X (m)')
     ax2.set_ylabel('Y (m)')
@@ -706,93 +770,129 @@ if 'transformed_img' in transformation and 'extent' in transformation:
 
 plt.tight_layout()
 
-ortho_check_file = gcps_dir / (f"{gcp_cam}_ortho_check_{ch_dat}_{ch_clo}.png")
+ortho_check_file = gcps_dir / (f"{gcp_cam}_ortho_check_{gcp_date}_{gcp_time}.png")
 plt.savefig(str(ortho_check_file))
 plt.show()
 #plt.close(fig)
 
 # %%
 # Save transformation
-transf_file = gcps_dir / (f"{gcp_cam}_transform_{ch_dat}_{ch_clo}.json")
+transf_file = gcps_dir / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
 with open(transf_file, 'w') as f:
     json.dump(transformation_matrix, f, indent=1)
 print(f"Transformation matrix saved to\n{transf_file}")
 
 # Save raw orthorectified image
-#ortho_file = gcps_dir / (f"{gcp_cam}_orthorect_{ch_dat}_{ch_clo}.png")
+#ortho_file = gcps_dir / (f"{gcp_cam}_orthorect_{gcp_date}_{gcp_time}.png")
 #plt.imsave(str(ortho_file), transformation['transformed_img'])
 
 # %% [markdown]
 # ### End of Step 3 (repeat for each station)
 
+# %%
+raise SystemExit
+
 # %% [markdown]
 # # Step 4: Cross Section Selection
 
 # %%
-# %matplotlib widget
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-import numpy as np
-from PIL import Image
-from ipywidgets import FloatSlider, VBox, Label, HBox
+# to do:
+# 1) use function for all steps below
+# 2) make cross section selection dynamic
+# 3) add additional directories for outputs
 
-plt.ioff()  # 🔴 prevent Matplotlib auto-displaying the figure
+# %%
 
-###################################################
+# %%
 gcp_cam = "ilh-cam1-pt"
 gcp_date = "20250426"         # in format YYYYMMDD
-gcp_time = "120000"           # in format HHMMSS
+gcp_time = "120000"
 
+# Load image
 _,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
-
-img1 = mpimg.imread(str(frame_path))
-###################################################
-gcp_cam = "le5-cam1-pt"
-gcp_date = "20250426"         # in format YYYYMMDD
-gcp_time = "120000"           # in format HHMMSS
-
-_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
-
-img2 = mpimg.imread(str(frame_path))
-###################################################
-
-# --- Plot with alpha slider ---
-
-fig, ax = plt.subplots(figsize=(14, 8))
-ax.set_title("Overlay comparison (foreground opacity)")
-ax.axis("off")
-
-bg = ax.imshow(img1)
-fg = ax.imshow(img2, alpha=0.5)  # start half transparent
-
-alpha_slider = FloatSlider(
-    value=0.5, min=0.0, max=1.0, step=0.01,
-    description='Date 1', continuous_update=True, readout=False
-)
-
-def on_alpha_change(change):
-    fg.set_alpha(change['new'])
-    fig.canvas.draw_idle()
-
-alpha_slider.observe(on_alpha_change, names='value')
-alpha_label = Label("Date 2")
-slider_row = HBox([alpha_slider, alpha_label])
-
-
-ui = VBox([slider_row, fig.canvas])
-display(ui)  # ✅ show exactly once
-
+img = mpimg.imread(str(frame_path))
 
 # %%
 # Load transformation matrix
+transf_file = gcps_dir / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
 with open(transf_file, 'r') as f:
     transformation_matrix = np.array(json.load(f))
 
 # %%
-transformation
+# Load GCP image coordinates
+points_img = []
+gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
+with open(gcps_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = int(float(row[0]))
+        y = int(float(row[1]))
+        points_img.append((x, y))
+
+point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
+point_coords_pixel = dict(zip(point_img_keys, points_img))
+print(f"GCPs image coordinates:\n{point_coords_pixel}")
 
 # %%
-transformation_matrix
+# Load GCP real world coordinates
+points_real = []
+gcps_real_file = gcps_dir / f"{gcp_cam}_gcps_real.csv"
+with open(gcps_real_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = int(float(row[0]))
+        y = int(float(row[1]))
+        points_real.append((x, y))
+
+point_real_keys = [f"point{i}" for i in range(1, len(points_real) + 1)]
+point_coords_world = dict(zip(point_real_keys, points_real))
+
+# function for calculating euclidian distances
+def dist(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+distances = {
+    'd12': dist(point_coords_world['point1'], point_coords_world['point2']),
+    'd23': dist(point_coords_world['point2'], point_coords_world['point3']),
+    'd34': dist(point_coords_world['point3'], point_coords_world['point4']),
+    'd41': dist(point_coords_world['point4'], point_coords_world['point1']),
+    'd13': dist(point_coords_world['point1'], point_coords_world['point3']),  # diagonal
+    'd24': dist(point_coords_world['point2'], point_coords_world['point4'])   # diagonal
+}
+distances_print = {name: round(value, 2) for name, value in distances.items()}
+
+print("GCPs real world coordinates (X/Y) and distances (m):")
+print(point_coords_world)
+print(distances_print)
+
+# %%
+# Calculate transformation matrix
+# Extract coordinates for transformation
+x1_pix, y1_pix = point_coords_pixel['point1']
+x2_pix, y2_pix = point_coords_pixel['point2']
+x3_pix, y3_pix = point_coords_pixel['point3']
+x4_pix, y4_pix = point_coords_pixel['point4']
+
+# Calculate transformation matrix
+transformation = oblique_view_transformation_matrix(
+    x1_pix, y1_pix,
+    x2_pix, y2_pix,
+    x3_pix, y3_pix,
+    x4_pix, y4_pix,
+    distances['d12'],
+    distances['d23'],
+    distances['d34'],
+    distances['d41'],
+    distances['d13'],
+    distances['d24'],
+    image_path=frame_path,
+)
 
 # %%
 # %matplotlib widget
@@ -800,7 +900,8 @@ transformation_matrix
 plt.close()
 plt.figure(figsize=(14, 10))
 ax = plt.gca()
-
+ax.minorticks_on()
+ax.grid(True, which='both', color='black', linewidth=0.5, alpha=0.2)
 
 extent = transformation['extent']
 ax.imshow(transformation['transformed_img'], extent=extent)
@@ -830,9 +931,9 @@ ax.text(x_pos + scale_length_rounded/2, y_pos + 2*bar_height,
         bbox=dict(facecolor='white', alpha=0.7, pad=2))
 
 
-ax.set_xlabel('East (m)')
-ax.set_ylabel('North (m)')
-ax.set_title('Cross-section selection in orthorectified image')
+ax.set_xlabel('X (m)')
+ax.set_ylabel('Y (m)')
+ax.set_title('Cross section selection in orthorectified image')
 
 #plt.tight_layout()
 
@@ -890,6 +991,7 @@ def onclick(event):
         # fig.savefig(str(image_output_file), dpi=150, bbox_inches='tight')
         # print(f"Saved: {image_output_file}")
 
+
 # Connect the callback
 cid = ax.figure.canvas.mpl_connect('button_press_event', onclick)
 
@@ -900,3 +1002,55 @@ plt.show()
 point_coords_rw
 
 # %%
+
+# %%
+
+# %%
+## Overlay comparison
+
+# %matplotlib widget
+plt.ioff()  # 🔴 prevent Matplotlib auto-displaying the figure
+
+###################################################
+gcp_cam = "ilh-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+img1 = mpimg.imread(str(frame_path))
+###################################################
+gcp_cam = "le5-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+img2 = mpimg.imread(str(frame_path))
+###################################################
+
+# --- Plot with alpha slider ---
+
+fig, ax = plt.subplots(figsize=(14, 8))
+ax.set_title("Overlay comparison (foreground opacity)")
+ax.axis("off")
+
+bg = ax.imshow(img1)
+fg = ax.imshow(img2, alpha=0.5)  # start half transparent
+
+alpha_slider = FloatSlider(
+    value=0.5, min=0.0, max=1.0, step=0.1,
+    description='Date 1', continuous_update=True, readout=False
+)
+
+def on_alpha_change(change):
+    fg.set_alpha(change['new'])
+    fig.canvas.draw_idle()
+
+alpha_slider.observe(on_alpha_change, names='value')
+alpha_label = Label("Date 2")
+slider_row = HBox([alpha_slider, alpha_label])
+
+
+ui = VBox([slider_row, fig.canvas])
+display(ui)  # ✅ show exactly once
