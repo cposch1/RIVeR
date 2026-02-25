@@ -1,0 +1,1464 @@
+# ---
+# jupyter:
+#   jupytext:
+#     formats: ipynb,py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.1
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
+
+# %%
+from river.config import *
+
+
+# %% [markdown]
+# # Step 1: Metadata Extraction
+#
+# Extract video metadata
+
+# %%
+# Function that extracts video properties
+def check_video_info(video_path: Path) -> dict:
+    """Check video properties and estimate storage requirements."""
+    cap = cv2.VideoCapture(str(video_path))
+    
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video file: {video_path}")
+    
+    try:
+        # Get video properties
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Read one frame to estimate size
+        ret, frame = cap.read()
+        if not ret:
+            raise VideoHasNoFrames("Could not read frames from video")
+            
+        frame_size_mb = frame.nbytes / (1024 * 1024)  # Size in MB
+        total_size_gb = (frame_size_mb * total_frames) / 1024  # Total size in GB
+        
+        return {
+            "total_frames": total_frames,
+            "fps": fps,
+            "resolution": f"{width}x{height}",
+            "estimated_size_gb": total_size_gb
+        }
+    finally:
+        cap.release()
+
+
+# Function that scans all videos
+def scan_videos_and_write_csvs(
+    videos_root: Path,
+    suffix: str = ".avi",
+    overwrite: bool = True,
+) -> dict:
+    """
+    Scan videos under `videos_root` expecting naming convention:
+      {camera}_{date}-{clockstart}-{clockend}.avi
+
+    Creates one CSV per camera:  {camera}_meta.csv  in  out_root / "meta"
+
+    CSV columns: date, clock, total_frames, fps, resolution, estimated_size_gb
+    Returns a dict: camera_name -> path_to_csv
+    """
+    videos_root = videos_root.resolve()
+
+    # Regex: capture camera, date (YYYYMMDD), start/end (hhmmss), allowing '_' or '-' as separators
+    pat = re.compile(r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})\.mp4$',re.IGNORECASE)
+
+    # Arrays that gather rows and error rows per camera
+    rows_per_camera = {}
+    errors_per_camera = {}
+
+    # Loop directories to extract info
+    for path in videos_root.rglob(f"*{suffix}"):
+        
+        fname = path.name
+ 
+        # >>> Ignore AppleDouble/metadata artifacts <<<
+        if fname.startswith(('._')):
+            continue
+        m = pat.match(fname)
+        if not m:
+            continue
+
+        camera = m.group("camera")
+        date = m.group("date")
+        clock_start = m.group("start")
+        clock_end = m.group("end")
+
+        # Extract video info; on error, log to per-camera error CSV accumulator
+        try:
+            info = check_video_info(path)
+        
+        except Exception as e:
+            errors_per_camera.setdefault(camera, []).append({
+                "date": date,
+                "clock_start": clock_start,
+                "clock_end": clock_end,
+                "error_message": str(e),
+                "estimated_size_gb": round(os.path.getsize(path) / (1024**3),2),
+                "path": str(path.relative_to(videos_root)),
+            })
+            continue
+
+        row = {
+            "date": date,
+            "clock_start": clock_start,
+            "clock_end": clock_end,
+            "total_frames": info["total_frames"],
+            "fps": info["fps"],
+            "resolution": info["resolution"],
+            "estimated_size_gb": round(info["estimated_size_gb"],2),
+            "path": str(path.relative_to(videos_root)),
+        }
+        rows_per_camera.setdefault(camera, []).append(row)
+
+    # Write meta CSVs
+    camera_to_csv = {}
+    for camera, rows in rows_per_camera.items():
+        # Sort by date then start time inside 'clock'
+        rows.sort(key=lambda r: (r["date"], r["clock_start"]))
+
+        csv_path = video_dir / f"_{camera}_meta.csv"
+        camera_to_csv[camera] = csv_path
+        write_header = overwrite or not csv_path.exists()
+        mode = "w" if write_header else "a"
+        
+        with csv_path.open(mode, newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["date", "clock_start", "clock_end", "total_frames", "fps", "resolution", "estimated_size_gb", "path"],
+            )
+            if write_header:
+                writer.writeheader()
+            writer.writerows(rows)
+        
+    # Write error CSVs
+    err_to_csv = {}
+    for camera, rows in errors_per_camera.items():
+        # Sort by date then clock for consistency
+        rows.sort(key=lambda r: (r["date"], r["clock_start"]))
+
+        err_csv_path = video_dir / f"_{camera}_error_log.csv"
+        err_to_csv[camera] = err_csv_path
+        err_write_header = overwrite or not err_csv_path.exists()
+        mode = "w" if err_write_header else "a"
+        
+        with err_csv_path.open(mode, newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["date", "clock_start", "clock_end", "error_message", "estimated_size_gb", "path"],
+            )
+            if write_header:
+                writer.writeheader()
+            writer.writerows(rows)
+
+    if not rows_per_camera and not errors_per_camera:
+        # No videos matched or everything skipped silently; keep quiet per your requirement
+        pass
+
+    return camera_to_csv, err_to_csv
+
+# Run the functions
+camera_csvs, err_csvs = scan_videos_and_write_csvs(video_dir, suffix=".mp4", overwrite=True)
+
+print(f"DONE.\n\nFollowing metadata files have been created:\n{camera_csvs}\n\nFollowing error log files have been created:\n{err_csvs}")
+
+# %% [markdown]
+# # Step 2: Frame Extraction
+#
+# Extract video frames
+# - `every`: Extract every nth frame (e.g., every=2 takes every second frame)
+# - `start_frame_number`: Begin extraction from this frame
+# - `end_frame_number`: Stop extraction at this frame
+# - `chunk_size`: Number of frames per processing chunk (affects memory usage)
+
+# %%
+import re
+import csv
+from pathlib import Path
+from tqdm import tqdm
+
+#########################
+### DEFINE PARAMETERS ###
+#########################
+
+start_frame_number = 0
+end_frame_number = None    # process all frames
+every = 2
+
+###############################################
+
+# File parsing: match "<camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>.<ext>"
+# Use greedy camera group to capture everything up to the last "_" before the date.
+VID_NAME_RE = re.compile(
+    r'^(?P<camera>.+)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})\.(?P<ext>avi|mp4)$',
+    re.IGNORECASE
+)
+
+def parse_video_name(video_path: Path):
+    """
+    Parse the video filename and return (camera, date, clock_start, clock_end).
+    """
+    m = VID_NAME_RE.match(video_path.name)
+    if not m:
+        raise ValueError(f"Video filename does not match expected pattern: {video_path.name}")
+    camera = m.group("camera")
+    date = m.group("date")
+    clock_start = m.group("start")
+    clock_end = m.group("end")
+    return camera, date, clock_start, clock_end
+
+
+def target_frames_dir_for(video_path: Path, base_frames_dir: Path) -> Path:
+    """
+    frames/<camera>/<date>/<clock_start>-<clock_end>/
+    """
+    camera, date, clock_start, clock_end = parse_video_name(video_path)
+    clock_segment = f"{clock_start}-{clock_end}"
+    return base_frames_dir / camera / date / clock_segment
+
+
+def iter_videos(root: Path, suffixes=(".avi", ".mp4")):
+    root = Path(root)
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        name = p.name
+        # Ignore AppleDouble / metadata artifacts
+        if name.startswith(("._", ":_")):
+            continue
+        if p.suffix.lower() in suffixes:
+            yield p
+
+
+def load_allowed_from_meta(video_root: Path) -> set[tuple[str, str, str, str]]:
+    """
+    Reads per-camera meta TSV/CSV files (_{camera}_meta.csv) and returns a set of
+    (camera, date, clock_start, clock_end). Detects delimiter (comma, semicolon, tab, pipe),
+    trims whitespace, and handles UTF-8 BOM.
+
+    Expected headers: date, clock_start, clock_end
+    """
+    allowed: set[tuple[str, str, str, str]] = set()
+    video_root = Path(video_root)
+
+    # Use rglob in case meta files are in subfolders
+    for meta_csv in video_root.rglob("_*_meta.csv"):
+        name = meta_csv.name
+        if not (name.startswith("_") and name.endswith("_meta.csv")):
+            continue
+
+        camera = name[1:-9]  # remove leading "_" and trailing "_meta.csv"
+
+        with meta_csv.open("r", newline="", encoding="utf-8-sig") as f:
+            sample = f.read(8192)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            except csv.Error:
+                # Fallback to comma
+                dialect = csv.excel
+
+            reader = csv.DictReader(f, dialect=dialect)
+
+            # Normalize header variants (some editors truncate or rename headers)
+            # We'll map keys we care about to canonical names.
+            # Build a case-insensitive header map.
+            if reader.fieldnames is None:
+                continue
+            key_map = { (h or "").strip().lower(): h for h in reader.fieldnames }
+
+            def get(row, *keys):
+                for k in keys:
+                    src = key_map.get(k)
+                    if src and row.get(src) is not None:
+                        return row[src]
+                return None
+
+            for row in reader:
+                date = (get(row, "date") or "").strip()
+                clock_start = (get(row, "clock_start", "clock_sta") or "").strip()
+                clock_end   = (get(row, "clock_end") or "").strip()
+
+                if not date or not clock_start or not clock_end:
+                    continue
+
+                allowed.add((camera, date, clock_start, clock_end))
+    return allowed
+
+
+# ---------- Main extraction ----------
+
+allowed_quads = load_allowed_from_meta(video_dir)
+print(f"Loaded {len(allowed_quads)} allowed entries.")
+
+processed = 0
+skipped = 0
+
+# Optional: quick debug dump if nothing loaded
+if not allowed_quads:
+    print("WARNING: No allowed entries found. Check delimiter/headers in meta files.")
+
+for vp in tqdm(list(iter_videos(video_dir)), desc="Extracting frames"):
+    # Only process videos that are present in per-camera meta CSVs
+    try:
+        camera, date, clock_start, clock_end = parse_video_name(vp)
+    except ValueError:
+        skipped += 1
+        continue
+
+    key = (camera, date, clock_start, clock_end)
+    if key not in allowed_quads:
+        skipped += 1
+        # Uncomment for targeted debugging of first few mismatches:
+        # if skipped <= 5:
+        #     print("Not in metadata:", key)
+        continue
+
+    dest = target_frames_dir_for(vp, frames_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    extract_config = {
+        "video_path": vp,
+        "frames_dir": dest,          # hierarchical destination (camera/date/clock_start/clock_end)
+        "start_frame_number": start_frame_number,
+        "end_frame_number": end_frame_number,    # process all frames
+        "every": every,               # sampling
+        "overwrite": False
+    }
+
+    # Let errors bubble up if something is wrong in extraction
+    _first_frame = video_to_frames(**extract_config)
+    processed += 1
+
+print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s).")
+
+
+# %%
+# Function that constructs paths to frames
+def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
+    """
+    Walks a frames directory structured like:
+    
+        frame_dir / camera / date / clock / *.jpg
+        
+    and returns a DataFrame with columns:
+        camera, date, clock, frame_path
+    """
+    
+
+    frame_dir = frame_dir.resolve()
+    print(frame_dir)
+
+    rows = []
+
+    # Loop structure: camera → date → clock_segment → frames
+    for camera_dir in frame_dir.iterdir():
+        camera = camera_dir.name
+
+        for date_dir in camera_dir.iterdir():
+            date = date_dir.name  # expect YYYYMMDD
+
+            for clock_dir in date_dir.iterdir():                   
+                parts = clock_dir.name.split("-")
+                clock_start, clock_end = parts
+
+                # Collect all JPG frames in this folder
+                for jpg in clock_dir.glob("*.jpg"):
+                    frame_path = jpg.resolve()
+                    rows.append({
+                        "camera": camera,
+                        "date": date,
+                        "clock_start": clock_start,
+                        "clock_end": clock_end,
+                        "frame_path": frame_path
+                    })
+
+    df = pd.DataFrame(rows, columns=["camera", "date", "clock_start", "clock_end", "frame_path"])
+
+    return df
+
+df_frames = collect_frame_paths(frames_dir)
+
+# %% [markdown]
+# # Step 3: Orthrectification
+
+# %% [markdown]
+# ### Repeat lines until "End of Step 3" for each station
+
+# %%
+#########################
+### DEFINE PARAMETERS ###
+#########################
+
+gcp_cam = "chamb_03"
+gcp_date = "20250223"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+#########################
+
+# Function that loads the frame image
+def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
+    df_sub = df_frames[
+        (df_frames["camera"] == gcp_cam) &
+        (df_frames["date"] == gcp_date) &
+        (df_frames["clock_start"] == gcp_time)
+    ].copy()
+    
+    if df_sub.empty:
+        raise FileNotFoundError("Camera/date/time not valid")
+    
+    df_sub["basename"] = (
+        df_sub["frame_path"]
+        .astype(str)
+        .str.replace("\\", "/", regex=False)
+        .apply(lambda p: Path(p).name.lower())
+    )
+    hits = df_sub[df_sub["basename"].eq("0000000000.jpg")]
+    if hits.empty:
+        raise FileNotFoundError("No '0000000000.jpg' in that segment")
+    
+    frame_path = str(Path(hits.iloc[0]["frame_path"]).as_posix())
+    frame = cv2.imread(str(frame_path))
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return frame, frame_rgb, frame_path
+
+frame, frame_rgb, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+# %%
+# Display image and select GCPs
+# %matplotlib widget
+plt.close()
+
+img = mpimg.imread(str(frame_path))
+
+points = []
+
+fig, ax = plt.subplots(figsize=(14,10))
+ax.imshow(img)
+ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{frame_path}")
+plt.axis("off")
+
+def onclick(event):
+    # Ensure click is inside image
+    if event.xdata is not None and event.ydata is not None:
+        x, y = int(event.xdata), int(event.ydata)
+        print(f"Clicked at: x={x}, y={y}")
+        points.append((x, y))
+        
+        n = len(points)
+        if n == 1:
+            ax.plot(x, y, 'o', color='#ED6B57', markersize=3)  # first point red
+            ax.text(x, y, "1", color='#ED6B57', fontsize=8, ha='left', va='bottom')
+        elif n in (2, 3):
+            ax.plot(x, y, 'o', color='#6CD4FF', markersize=3)  # 2nd & 3rd blue
+            ax.text(x, y, str(n), color='#6CD4FF', fontsize=8, ha='left', va='bottom')
+        elif n == 4:
+            ax.plot(x, y, 'o', color='#6CD4FF', markersize=3)  # 4th blue
+            ax.text(x, y, str(n), color='#6CD4FF', fontsize=8, ha='left', va='bottom')
+            
+            fig.canvas.draw()
+            fig.canvas.mpl_disconnect(cid)
+            print("4 points collected:", points)
+            return
+
+
+cid = fig.canvas.mpl_connect('button_press_event', onclick)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ### Select GCPs in the displayed picture above
+
+# %%
+raise SystemExit
+
+# %%
+# Save GCP image coordinates
+if points == []:
+    print(f"No GCPs selected and saved")
+else:
+    print(f"Selected image coordinates (X/Y):\n{points}")
+
+    gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
+    with open(gcps_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows(points)
+    print(f"\nImage coordinates saved to:\n{gcps_file}")
+    
+    gcps_img = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}_00_main.png")
+    plt.savefig(str(gcps_img))
+    plt.close()
+    print(f"\nImage coordinates selection saved to:\n{gcps_img}")
+
+# %%
+# Export auxiliary imagery of later dates to check stable camera position
+
+gcp_check_dates = ["20250426","20250427"]         # in format YYYYMMDD
+gcp_check_time = "130000"                         # in format HHMMSS
+
+# Function that loads auxiliary imagery paths
+def get_gcp_frame_paths(
+    df_frames,
+    camera: str,
+    dates: list[str],
+    start_time: str,  # "HHMMSS"
+    target_basename: str = "0000000000.jpg"
+) -> list[str | None]:
+    """
+    For each date in `dates`, returns the frame_path matching:
+      camera == camera
+      date == normalized YYYYMMDD
+      clock == HHMMSS-(HHMMSS+59min)
+      basename == target_basename
+    If a given date has no match, returns None at that position.
+    """
+    norm_dates = [str(d).strip().zfill(8) for d in dates]
+    check_clock_exact = gcp_check_time+"-"+str(int(gcp_check_time)+5900)
+
+    # Pre-filter by camera/date/clock for speed
+    df_check = df_frames[
+        (df_frames["camera"] == camera) &
+        (df_frames["date"].astype(str).isin(norm_dates)) &
+        (df_frames["clock_start"] == gcp_check_time)
+    ].copy()
+
+    # Compute lowercase basenames
+    df_check["basename"] = (
+        df_check["frame_path"]
+        .astype(str)
+        .str.replace("\\", "/", regex=False)
+        .apply(lambda p: Path(p).name.lower())
+    )
+
+    # Filter to target basename only
+    hits = df_check[df_check["basename"].eq(target_basename.lower())].copy()
+
+    # Build a lookup (date -> list of paths); usually 1 per date
+    by_date = {}
+    for _, row in hits.iterrows():
+        d = str(row["date"]).strip().zfill(8)
+        by_date.setdefault(d, []).append(str(Path(row["frame_path"]).as_posix()))
+
+    # Return results aligned with input dates, using None when missing
+    check_results = []
+    for d in norm_dates:
+        paths_for_d = by_date.get(d, [])
+        check_results.append({
+            "date": d,
+            "clock_start": clock_start,
+            "frame_path": paths_for_d[0] if paths_for_d else None
+        })
+    
+    return pd.DataFrame(check_results)
+
+
+# Load auxiliary imagery paths
+check_results = get_gcp_frame_paths(df_frames, gcp_cam, gcp_check_dates, gcp_check_time)
+print("Following auxiliary imagery has been exported:")
+
+# Save auxiliary imagery
+n_aux = 1
+for ch_dat, ch_clo, ch_pat in zip(check_results.date,check_results.clock_start,check_results.frame_path):
+    img = mpimg.imread(str(ch_pat))
+    plt.close()
+    fig, ax = plt.subplots(figsize=(14, 10))
+    ax.imshow(img)
+    ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{ch_pat}")
+    ax.axis("off")
+    plt.tight_layout()
+    
+    check_img = gcps_dir / (f"{gcp_cam}_gcps_img_{ch_dat}_{ch_clo}_{n_aux:02d}_aux.png")
+    n_aux = n_aux + 1
+    print(check_img)
+    fig.savefig(str(check_img))
+    plt.close()
+
+
+# %%
+# Load GCP image coordinates
+points_img = []
+gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
+with open(gcps_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = int(float(row[0]))
+        y = int(float(row[1]))
+        points_img.append((x, y))
+
+point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
+point_coords_pixel = dict(zip(point_img_keys, points_img))
+print(f"GCPs image coordinates:\n{point_coords_pixel}")
+
+# %%
+# Load GCP real world coordinates
+points_real = []
+gcps_real_file = gcps_dir / f"{gcp_cam}_gcps_real.csv"
+with open(gcps_real_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = float(row[0])
+        y = float(row[1])
+        points_real.append((x, y))
+
+point_real_keys = [f"point{i}" for i in range(1, len(points_real) + 1)]
+point_coords_world = dict(zip(point_real_keys, points_real))
+
+# Print real world coordinates
+print("GCPs real world coordinates:")
+print(point_coords_world)
+
+
+# %%
+# function for calculating euclidian distances
+def dist(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+distances = {
+    'd12': dist(point_coords_world['point1'], point_coords_world['point2']),
+    'd23': dist(point_coords_world['point2'], point_coords_world['point3']),
+    'd34': dist(point_coords_world['point3'], point_coords_world['point4']),
+    'd41': dist(point_coords_world['point4'], point_coords_world['point1']),
+    'd13': dist(point_coords_world['point1'], point_coords_world['point3']),  # diagonal
+    'd24': dist(point_coords_world['point2'], point_coords_world['point4'])   # diagonal
+}
+
+# Print real world distances
+distances_print = {name: round(value, 2) for name, value in distances.items()}
+print("GCPs real world distances:")
+print(distances_print)
+
+# Save real world distances
+gcps_file_dist = gcps_dir / (f"{gcp_cam}_gcps_dist_real.csv")
+with open(gcps_file_dist, "w", newline="") as f:
+    writer = csv.writer(f)
+    for name, value in distances_print.items():
+        writer.writerow([value])
+
+print(f"\nImage coordinates selection saved to:\n{gcps_file_dist}")
+
+# %%
+# Load GCP real world distances
+gcps_real_dist_file = gcps_dir / f"{gcp_cam}_gcps_dist_real.csv"
+distances=[]
+with open(gcps_real_dist_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        dist = float(row[0])
+        distances.append(dist)
+
+# Print real world coordinates
+print("GCPs real world distances:")
+print(distances)
+
+# %%
+# Do test orthorectification and show/save test image
+# %matplotlib inline
+plt.close()
+
+# Extract coordinates for transformation
+x1_pix, y1_pix = point_coords_pixel['point1']
+x2_pix, y2_pix = point_coords_pixel['point2']
+x3_pix, y3_pix = point_coords_pixel['point3']
+x4_pix, y4_pix = point_coords_pixel['point4']
+
+# Extract distances for transformation
+d12=distances[0]
+d23=distances[1]
+d34=distances[2]
+d41=distances[3]
+d13=distances[4]
+d24=distances[5]
+
+# Calculate transformation matrix
+transformation = oblique_view_transformation_matrix(
+    x1_pix, y1_pix,
+    x2_pix, y2_pix,
+    x3_pix, y3_pix,
+    x4_pix, y4_pix,
+    d12,
+    d23,
+    d34,
+    d41,
+    d13,
+    d24,
+    image_path=frame_path,
+)
+
+transformation_matrix = transformation['transformation_matrix']
+
+# Visualize the points on the frame
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+# First subplot with original image and control points
+ax1.imshow(img)
+# Draw lines with specific colors
+# Line 1-2
+ax1.plot([x1_pix, x2_pix], [y1_pix, y2_pix], color='#6CD4FF', linewidth=2)
+# Line 2-3
+ax1.plot([x2_pix, x3_pix], [y2_pix, y3_pix], color='#62C655', linewidth=2)
+# Line 3-4
+ax1.plot([x3_pix, x4_pix], [y3_pix, y4_pix], color='#ED6B57', linewidth=2)
+# Line 4-1
+ax1.plot([x4_pix, x1_pix], [y4_pix, y1_pix], color='#F5BF61', linewidth=2)
+# Diagonal 1-3
+ax1.plot([x1_pix, x3_pix], [y1_pix, y3_pix], color='#CC4BC2', linewidth=2)
+# Diagonal 2-4
+ax1.plot([x2_pix, x4_pix], [y2_pix, y4_pix], color='#7765E3', linewidth=2)
+
+# Plot points
+# Point 1 in red
+ax1.plot(x1_pix, y1_pix, 'o', color='#ED6B57', markersize=3)
+ax1.text(x1_pix, y1_pix, "1", color='#ED6B57', fontsize=8, ha='left', va='bottom')
+# Points 2-4 in blue
+ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color='#6CD4FF', markersize=3)
+pts = [(x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix)]
+[ax1.text(x, y, str(i), color='#6CD4FF', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
+
+ax1.axis('off')
+ax1.set_title('Original Image')  # Fixed from ax1.title to ax1.set_title
+
+# Second subplot with orthorectified image
+if 'transformed_img' in transformation and 'extent' in transformation:
+    extent = transformation['extent']
+    ax2.imshow(transformation['transformed_img'], extent=extent)
+    
+    # Add scale bar
+    # Calculate appropriate scale length
+    map_width = extent[1] - extent[0]
+    magnitude = 10 ** np.floor(np.log10(map_width * 0.2))
+    scale_length = np.round(map_width * 0.2 / magnitude) * magnitude
+    scale_length_rounded = int(scale_length) if scale_length < 10 else scale_length
+    
+    # Define scale bar position (in data coordinates)
+    margin = (extent[1] - extent[0]) * 0.05  # 5% margin from edges
+    bar_height = (extent[3] - extent[2]) * 0.015  # Height of bar
+    x_pos = extent[1] - margin - scale_length_rounded
+    y_pos = extent[2] + margin
+    
+    # Add scale bar
+    rect = Rectangle((x_pos, y_pos), scale_length_rounded, bar_height,
+                     fc='white', ec='black')
+    ax2.add_patch(rect)
+    
+    # Add text label for the scale bar
+    ax2.text(x_pos + scale_length_rounded/2, y_pos + 2*bar_height,
+            f'{int(scale_length_rounded)} m',
+            ha='center', va='bottom', fontsize=9,
+            bbox=dict(facecolor='white', alpha=0.7, pad=2))
+    
+    # Convert GCP pixel coordinates to real-world coordinates to display in the second image
+    real_world_points = []
+    for x, y in [(x1_pix, y1_pix), (x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix)]:
+        rw_point = transform_pixel_to_real_world(x, y, transformation_matrix)
+        real_world_points.append(rw_point)
+    
+    real_world_points = np.array(real_world_points)
+    
+    # Get individual point coordinates
+    x1_rw, y1_rw = real_world_points[0]
+    x2_rw, y2_rw = real_world_points[1]
+    x3_rw, y3_rw = real_world_points[2]
+    x4_rw, y4_rw = real_world_points[3]
+    
+    # Draw lines with the same colors as in the first plot
+    # Line 1-2
+    ax2.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#6CD4FF', linewidth=2)
+    # Line 2-3
+    ax2.plot([x2_rw, x3_rw], [y2_rw, y3_rw], color='#62C655', linewidth=2)
+    # Line 3-4
+    ax2.plot([x3_rw, x4_rw], [y3_rw, y4_rw], color='#ED6B57', linewidth=2)
+    # Line 4-1
+    ax2.plot([x4_rw, x1_rw], [y4_rw, y1_rw], color='#F5BF61', linewidth=2)
+    # Diagonal 1-3
+    ax2.plot([x1_rw, x3_rw], [y1_rw, y3_rw], color='#CC4BC2', linewidth=2)
+    # Diagonal 2-4
+    ax2.plot([x2_rw, x4_rw], [y2_rw, y4_rw], color='#7765E3', linewidth=2)
+    
+    # Plot points
+    # Point 1 in red
+    ax2.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=3)
+    ax2.text(x1_rw, y1_rw, "1", color='#ED6B57', fontsize=8, ha='left', va='bottom')
+    # Points 2-4 in blue
+    ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='#6CD4FF', markersize=3)
+    pts = [(x2_rw, y2_rw), (x3_rw, y3_rw), (x4_rw, y4_rw)]
+    [ax2.text(x, y, str(i), color='#6CD4FF', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
+    
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_title('Orthorectified Image')
+
+plt.tight_layout()
+
+ortho_check_file = gcps_dir / (f"{gcp_cam}_ortho_check_{gcp_date}_{gcp_time}.png")
+plt.savefig(str(ortho_check_file))
+plt.show()
+#plt.close(fig)
+
+# %%
+# Save transformation
+transf_file = gcps_dir / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
+with open(transf_file, 'w') as f:
+    json.dump(transformation_matrix, f, indent=1)
+print(f"Transformation matrix saved to\n{transf_file}")
+
+# Save raw orthorectified image
+#ortho_file = gcps_dir / (f"{gcp_cam}_orthorect_{gcp_date}_{gcp_time}.png")
+#plt.imsave(str(ortho_file), transformation['transformed_img'])
+
+# %% [markdown]
+# ### End of Step 3 (repeat for each station)
+
+# %%
+raise SystemExit
+
+# %% [markdown]
+# # Step 4: Cross Section Selection
+
+# %%
+# to do:
+# 1) use function for all steps below
+# 2) make cross section selection dynamic
+# 3) add additional directories for outputs
+
+# %%
+
+# %%
+gcp_cam = "chamb_03"
+gcp_date = "20250223"         # in format YYYYMMDD
+gcp_time = "120000"
+
+# Load image
+_,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+img = mpimg.imread(str(frame_path))
+
+# %%
+# Load GCP image coordinates
+points_img = []
+gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
+with open(gcps_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = int(float(row[0]))
+        y = int(float(row[1]))
+        points_img.append((x, y))
+
+point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
+point_coords_pixel = dict(zip(point_img_keys, points_img))
+print(f"GCPs image coordinates:\n{point_coords_pixel}")
+
+# %%
+# Load GCP real world distances
+gcps_real_dist_file = gcps_dir / f"{gcp_cam}_gcps_dist_real.csv"
+distances=[]
+with open(gcps_real_dist_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        dist = float(row[0])
+        distances.append(dist)
+
+# Print real world coordinates
+print("GCPs real world distances:")
+print(distances)
+
+# %%
+# Calculate transformation matrix
+# Extract coordinates for transformation
+x1_pix, y1_pix = point_coords_pixel['point1']
+x2_pix, y2_pix = point_coords_pixel['point2']
+x3_pix, y3_pix = point_coords_pixel['point3']
+x4_pix, y4_pix = point_coords_pixel['point4']
+
+# Extract distances for transformation
+d12=distances[0]
+d23=distances[1]
+d34=distances[2]
+d41=distances[3]
+d13=distances[4]
+d24=distances[5]
+
+# Calculate transformation matrix
+transformation = oblique_view_transformation_matrix(
+    x1_pix, y1_pix,
+    x2_pix, y2_pix,
+    x3_pix, y3_pix,
+    x4_pix, y4_pix,
+    d12,
+    d23,
+    d34,
+    d41,
+    d13,
+    d24,
+    image_path=frame_path,
+)
+
+# %%
+# %matplotlib widget
+
+plt.close()
+plt.figure(figsize=(14, 10))
+ax = plt.gca()
+ax.minorticks_on()
+ax.grid(True, which='both', color='black', linewidth=0.5, alpha=0.2)
+
+extent = transformation['extent']
+ax.imshow(transformation['transformed_img'], extent=extent)
+
+# Add scale bar
+# Calculate appropriate scale length
+map_width = extent[1] - extent[0]
+magnitude = 10 ** np.floor(np.log10(map_width * 0.2))
+scale_length = np.round(map_width * 0.2 / magnitude) * magnitude
+scale_length_rounded = int(scale_length) if scale_length < 10 else scale_length
+
+# Define scale bar position (in data coordinates)
+margin = (extent[1] - extent[0]) * 0.05  # 5% margin from edges
+bar_height = (extent[3] - extent[2]) * 0.015  # Height of bar
+x_pos = extent[1] - margin - scale_length_rounded
+y_pos = extent[2] + margin
+
+# Add scale bar
+rect = Rectangle((x_pos, y_pos), scale_length_rounded, bar_height,
+                 fc='white', ec='black')
+ax.add_patch(rect)
+
+# Add text label for the scale bar
+ax.text(x_pos + scale_length_rounded/2, y_pos + 2*bar_height,
+        f'{int(scale_length_rounded)} m',
+        ha='center', va='bottom', fontsize=9,
+        bbox=dict(facecolor='white', alpha=0.7, pad=2))
+
+
+ax.set_xlabel('X (m)')
+ax.set_ylabel('Y (m)')
+ax.set_title('Cross section selection in orthorectified image')
+
+#plt.tight_layout()
+
+#mage_output_file = output_dir / "05_cross_sec_orthorect.png"
+#plt.savefig(str(image_output_file))
+
+# --- Interactive picking of two points in real-world coordinates ---
+points_rw = []
+point_coords_xs = {}  # {'point1': (x1, y1), 'point2': (x2, y2)}
+
+# We'll store the variables you used in your other code:
+x1_rw = y1_rw = x2_rw = y2_rw = None
+
+def onclick(event):
+    nonlocal_vars = ('x1_rw', 'y1_rw', 'x2_rw', 'y2_rw', 'point_coords_xs')  # for clarity in this cell
+    # In a notebook cell, use 'global' to assign to top-level names:
+    global x1_rw, y1_rw, x2_rw, y2_rw, point_coords_xs
+
+    # Only react to clicks inside the axes with valid data coordinates
+    if (event.inaxes is not ax) or (event.xdata is None) or (event.ydata is None):
+        return
+
+    x, y = float(event.xdata), float(event.ydata)
+    print(f"Clicked at: East={x:.3f} m, North={y:.3f} m")
+    points_rw.append((x, y))
+
+    # First point (left bank) — plot red marker
+    if len(points_rw) == 1:
+        x1_rw, y1_rw = points_rw[0]
+        ax.plot(x1_rw, y1_rw, 'o', color='#ED6B57', markersize=3, zorder=4)
+        fig.canvas.draw_idle()
+
+    # Second point (right bank) — plot green marker, draw the connecting line, disconnect
+    elif len(points_rw) == 2:
+        x2_rw, y2_rw = points_rw[1]
+        ax.plot(x2_rw, y2_rw, 'o', color='#62C655', markersize=3, zorder=4)
+        # Draw line connecting the two banks
+        ax.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#F5BF61', linewidth=2, zorder=4)
+
+        # Save into a dict for clean access
+        point_coords_xs = {
+            (x1_rw, y1_rw),
+            (x2_rw, y2_rw),
+        }
+
+        print("2 points collected (real-world coords):")
+        print(point_coords_xs)
+
+        # Disconnect the event handler after two points
+        fig.canvas.mpl_disconnect(cid)
+        fig.canvas.draw_idle()
+
+        # --- Optional: save figure automatically once selected ---
+        # image_output_file = output_dir / "05_cross_sec_orthorect_picked.png"
+        # fig.savefig(str(image_output_file), dpi=150, bbox_inches='tight')
+        # print(f"Saved: {image_output_file}")
+
+
+# Connect the callback
+cid = ax.figure.canvas.mpl_connect('button_press_event', onclick)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+point_coords_xs
+
+# %%
+if not point_coords_xs:
+    print("No GCPs selected and saved")
+else:
+    print(f"Selected cross-section coordinates (X/Y):\n{point_coords_xs}")
+
+    xs_file = gcps_dir / f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.csv"
+
+    # Ensure list (not set)
+    point_coords_xs = list(point_coords_xs)
+
+    with open(xs_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        # Write floats in Excel-friendly format
+        for x, y in point_coords_xs:
+            writer.writerow([f"{x:.15f}", f"{y:.15f}"])
+
+    print(f"\nCross-section coordinates saved to:\n{xs_file}")
+
+# %%
+# Load cross section point coordinates
+
+csv_cross_path = gcps_dir / (f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.csv")
+
+points_cross = []
+with open(csv_cross_path, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = float(row[0])
+        y = float(row[1])
+        points_cross.append((x, y))
+
+#point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
+#point_coords_pixel = dict(zip(point_img_keys, points_img))
+
+print(points_cross)
+
+x_le = points_cross[0][0]
+y_le = points_cross[0][1]
+x_ri = points_cross[1][0]
+y_ri = points_cross[1][1]
+
+# %%
+# Define bathymetry
+bath_file = bathy_dir / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
+
+lvl = 0.2
+
+le_bath = x_le - x_le
+ri_bath = x_ri - x_le
+mid_bath = ri_bath/2
+
+
+import numpy as np
+
+xL = le_bath
+xM = mid_bath
+xR = ri_bath
+lvl = lvl
+
+def p(x):
+    return lvl * (x - xM)**2 / ((xL - xM)*(xR - xM)) * (-1)
+
+xs = np.linspace(xL, xR, 15)
+points = [(float(x), float(p(x))) for x in xs]
+
+
+# Write CSV
+with open(bath_file, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["d", "h"])   # headers
+    writer.writerows(points)      # the data rows
+
+# %%
+# Define initial cross-sections dictionary
+xsections = {
+    "section1": {
+        "east_l": x_le,      # Left bank easting
+        "north_l": y_le,      # Left bank northing
+        "east_r": x_ri,      # Right bank easting
+        "north_r": y_ri,      # Right bank northing
+        "level": lvl,       # Water level
+        "num_stations": 5,   # Number of analysis points
+        "alpha": 1,           # Velocity correction coefficient
+        "bath": str(bath_file),  # Path to bathymetry file
+        "left_station": 2.0   # Offset for first station from left bank
+    }
+}
+
+# Calculate pixel coordinates from real-world coordinates
+left_pixel = transform_real_world_to_pixel(xsections["section1"]["east_l"], 
+                                         xsections["section1"]["north_l"], 
+                                         transformation_matrix)
+right_pixel = transform_real_world_to_pixel(xsections["section1"]["east_r"], 
+                                          xsections["section1"]["north_r"], 
+                                          transformation_matrix)
+# Calculate real-world length of the section
+rw_length = np.sqrt((xsections["section1"]["east_r"] - xsections["section1"]["east_l"])**2 + 
+                    (xsections["section1"]["north_r"] - xsections["section1"]["north_l"])**2)
+
+# Update the dictionary with additional values
+xsections["section1"].update({
+    "xl": left_pixel[0],     # Left bank x-pixel coordinate
+    "yl": left_pixel[1],     # Left bank y-pixel coordinate
+    "xr": right_pixel[0],    # Right bank x-pixel coordinate
+    "yr": right_pixel[1],    # Right bank y-pixel coordinate
+    "rw_length": rw_length
+})
+
+# Save cross-sections to JSON
+sect_file = bathy_dir / (f"{gcp_cam}_sect_{gcp_date}_{gcp_time}.json")
+with open(sect_file, 'w') as f:
+    json.dump(xsections, f, indent=2)
+print(f"\nCross-sections data saved to {sect_file}")
+
+# %%
+# Load and plot bathymetry data
+data = Dataset()
+with open(bath_file, 'r') as f:
+    data.load(f, format='csv', headers=False)
+
+# Extract stations and stages
+stations = [float(i) if i is not None else 0.0 for i in data.get_col(0)[1:]]
+stages = [float(i) if i is not None else 0.0 for i in data.get_col(1)[1:]]
+stations = np.array(stations)
+stages = np.array(stages)
+
+# Create figure with two subplots
+plt.close()
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+
+# First subplot: Frame with cross-section points
+ax1.imshow(frame_rgb)
+ax1.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]], 
+         [xsections["section1"]["yl"], xsections["section1"]["yr"]], 
+         color='#F5BF61', linewidth=2)  # Line connecting points
+ax1.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=3)  # Left point
+ax1.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=3)  # Right point
+
+ax1.set_title('Cross-Section Location')
+ax1.axis('off')
+
+# Second subplot: Bathymetry profile
+ax2.plot(stations, stages, 'k-', linewidth=2, label='River bed')
+ax2.axhline(y=xsections["section1"]["level"], color='#6CD4FF', linestyle='--', label='Water level')
+ax2.fill_between(stations, stages, xsections["section1"]["level"], 
+                where=(stages <= xsections["section1"]["level"]), 
+                alpha=0.3, color='#6CD4FF', label='Wet area')
+ax2.grid(True)
+ax2.set_xlabel('Distance from left bank (m)')
+ax2.set_ylabel('Elevation (m)')
+ax2.set_title('Bathymetry Profile')
+ax2.legend()
+
+# Adjust layout
+plt.tight_layout()
+
+#image_output_file = output_dir / "05_cross-sec_bath.png"
+#plt.savefig(str(image_output_file))
+plt.show()
+
+# %% [markdown]
+# # Step 5: PIV Analysis
+
+# %%
+# Load transformation matrix
+transf_file = gcps_dir / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
+with open(transf_file, 'r') as f:
+    transformation_matrix = np.array(json.load(f))
+
+# Load cross-sections data
+sect_file = bathy_dir / (f"{gcp_cam}_sect_{gcp_date}_{gcp_time}.json")
+with open(sect_file, 'r') as f:
+    xsections = json.load(f)
+
+gcp_cam = "chamb_03"
+gcp_date = "20250223"         # in format YYYYMMDD
+gcp_time = "120000"
+
+# Load image
+_,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+img = mpimg.imread(str(frame_path))
+
+# Load and display frame
+frame = cv2.imread(str(frame_path))
+frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+plt.figure(figsize=(12, 8))
+plt.imshow(frame_rgb)
+plt.axis('off')
+plt.title('Analysis Frame')
+plt.show()
+
+# %%
+# Define PIV analysis parameters
+piv_params = {
+    "interrogation_area_1": 128,  # Size of first interrogation window
+    "interrogation_area_2": 64,   # Size of second interrogation window
+    "overlap": 64,              # Size overlap
+    "num_stations": xsections["section1"]["num_stations"],
+    "window_size": 32           # Base window size for height calculation
+}
+
+print("PIV Analysis Parameters:")
+print(f"First pass window size: {piv_params['interrogation_area_1']} pixels")
+print(f"Second pass window size: {piv_params['interrogation_area_2']} pixels")
+print(f"Window overlap: {piv_params['overlap']/piv_params['interrogation_area_1']*100}%")
+print(f"Number of stations: {piv_params['num_stations']}")
+
+# %%
+# Calculate recommended ROI height
+height_roi = recommend_height_roi(
+    xsections,
+    piv_params["interrogation_area_1"],
+    transformation_matrix
+)
+
+print(f"\nRecommended ROI height: {height_roi:.2f} meters")
+
+# %%
+# %matplotlib inline
+
+# Create mask and get bounding box
+mask, bbox = create_mask_and_bbox(
+    frame,
+    xsections,
+    transformation_matrix,
+    height_roi
+)
+
+plt.close()
+
+# Visualize mask overlaid on the frame
+plt.figure(figsize=(12, 8))
+
+# Display the original frame first
+plt.imshow(frame_rgb)
+
+# Create black overlay for the entire image
+overlay = np.zeros(frame_rgb.shape[:2])  # Single channel black overlay
+plt.imshow(overlay, alpha=0.1, cmap='gray')  # Apply with 0.1 opacity
+
+# Remove the overlay where mask is 1
+overlay_mask = np.ones(frame_rgb.shape[:2]) * 0.5  # Start with 0.5 opacity everywhere
+overlay_mask[mask == 1] = 0  # Make completely transparent where mask is 1
+plt.imshow(overlay, alpha=overlay_mask, cmap='gray')
+
+
+# Add the bounding box with dashed light blue lines
+rect = plt.Rectangle(
+    (bbox[0], bbox[1]), bbox[2], bbox[3],
+    linewidth=2, 
+    edgecolor='#6CD4FF',  # Light blue color
+    facecolor='none',
+    linestyle='--'        # Dashed line
+)
+plt.gca().add_patch(rect)
+
+# Add the Cross Section
+plt.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]], 
+         [xsections["section1"]["yl"], xsections["section1"]["yr"]], 
+         color='#F5BF61', linewidth=2)  # Line connecting points
+plt.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=10)  # Left point
+plt.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=10)  # Right point
+
+plt.title('Frame with Analysis Region and Mask')
+plt.axis('off')
+plt.tight_layout()
+
+#image_output_file = output_dir / "06_analysis_mask.png"
+#plt.savefig(str(image_output_file))
+
+plt.show()
+
+print("\nBounding Box Parameters:")
+print(f"x: {bbox[0]:.1f}")
+print(f"y: {bbox[1]:.1f}")
+print(f"width: {bbox[2]:.1f}")
+print(f"height: {bbox[3]:.1f}")
+
+# %%
+# %matplotlib inline
+
+frame_dir = frames_dir / (f"{gcp_cam}/{gcp_date}/120000-125900")
+print(frame_dir)
+
+# Get two consecutive frames
+frames = sorted(frame_dir.glob("*.jpg"))
+frame1_path = frames[0]
+frame2_path = frames[1]
+
+print(frame1_path)
+print(frame2_path)
+
+# Run PIV test
+piv_results = run_test(
+    image_1=frame1_path,
+    image_2=frame2_path,
+    mask=mask,
+    bbox=bbox,
+    interrogation_area_1=piv_params["interrogation_area_1"],
+    interrogation_area_2=piv_params["interrogation_area_2"]
+)
+
+plt.close()
+
+# Plot results
+plt.figure(figsize=(12, 8))
+
+# Display the first frame
+frame1 = cv2.imread(str(frame1_path))
+frame1_rgb = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
+plt.imshow(frame1_rgb)
+
+# Reshape results for quiver plot
+x = np.array(piv_results['x']).reshape(piv_results['shape'])
+y = np.array(piv_results['y']).reshape(piv_results['shape'])
+u = np.array(piv_results['u']).reshape(piv_results['shape'])
+v = np.array(piv_results['v']).reshape(piv_results['shape'])
+
+# Display the mask
+plt.imshow(overlay, alpha=overlay_mask, cmap='gray')
+
+# Create quiver plot with all displacement vectors
+# Create quiver plot with all displacement vectors
+# Note: We use -v because the image coordinate system has y-axis inverted
+# In images, y increases downward, while in plotting y increases upward
+# This inversion ensures the vectors point in the correct physical direction
+plt.quiver(x, y, u, -v,color='blue')
+
+
+plt.title('PIV Test Results')
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# %%
+# Run PIV Analisis
+piv_results = run_analyze_all(
+    frame_dir,
+    mask=mask,
+    bbox=bbox,
+    interrogation_area_1=piv_params["interrogation_area_1"],
+    interrogation_area_2=piv_params["interrogation_area_2"]
+)
+
+# Plot results
+plt.figure(figsize=(12, 8))
+
+# Display the first frame
+plt.imshow(frame1_rgb)
+x,y,u,v = np.array(piv_results['x']),np.array(piv_results['y']),np.array(piv_results['u_median']),np.array(piv_results['v_median'])
+
+# Display the mask
+plt.imshow(overlay, alpha=overlay_mask, cmap='gray')
+
+# Create quiver plot with all displacement vectors
+# Create quiver plot with all displacement vectors
+# Note: We use -v because the image coordinate system has y-axis inverted
+# In images, y increases downward, while in plotting y increases upward
+# This inversion ensures the vectors point in the correct physical direction
+plt.quiver(x, y, u, -v,color='blue')
+
+plt.title('PIV Median Results')
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# Save cross-sections to JSON
+output_file = output_dir / "piv_results.json"
+with open(output_file, 'w') as f:
+    json.dump(piv_results, f, indent=2)
+print(f"\nPIV results data saved to {output_file}")
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+## Overlay comparison
+
+# %matplotlib widget
+plt.ioff()  # 🔴 prevent Matplotlib auto-displaying the figure
+
+###################################################
+gcp_cam = "ilh-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+img1 = mpimg.imread(str(frame_path))
+###################################################
+gcp_cam = "le5-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+_,_,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+
+img2 = mpimg.imread(str(frame_path))
+###################################################
+
+# --- Plot with alpha slider ---
+
+fig, ax = plt.subplots(figsize=(14, 8))
+ax.set_title("Overlay comparison (foreground opacity)")
+ax.axis("off")
+
+bg = ax.imshow(img1)
+fg = ax.imshow(img2, alpha=0.5)  # start half transparent
+
+alpha_slider = FloatSlider(
+    value=0.5, min=0.0, max=1.0, step=0.1,
+    description='Date 1', continuous_update=True, readout=False
+)
+
+def on_alpha_change(change):
+    fg.set_alpha(change['new'])
+    fig.canvas.draw_idle()
+
+alpha_slider.observe(on_alpha_change, names='value')
+alpha_label = Label("Date 2")
+slider_row = HBox([alpha_slider, alpha_label])
+
+
+ui = VBox([slider_row, fig.canvas])
+display(ui)  # ✅ show exactly once
+
+# %%
