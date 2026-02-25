@@ -23,157 +23,218 @@ from river.config import *
 # Extract video metadata
 
 # %%
-# Function that extracts video properties
-def check_video_info(video_path: Path) -> dict:
-    """Check video properties and estimate storage requirements."""
+def _fmt_duration_hhmmss(total_seconds: Optional[float]) -> str:
+    """Format seconds as hh:mm:ss (always include hours, zero-padded). Empty string if None."""
+    if total_seconds is None:
+        return ""
+    secs = int(round(total_seconds))
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}{m:02d}{s:02d}"
+
+
+def _safe_duration_via_ratio(video_path: Path) -> Optional[float]:
+    """
+    Fallback duration: try seeking to end and reading timestamp in msec.
+    Returns seconds or None (backend dependent).
+    """
     cap = cv2.VideoCapture(str(video_path))
-    
     if not cap.isOpened():
-        raise ValueError(f"Could not open video file: {video_path}")
-    
+        return None
     try:
-        # Get video properties
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        # Read one frame to estimate size
-        ret, frame = cap.read()
-        if not ret:
-            raise VideoHasNoFrames("Could not read frames from video")
-            
-        frame_size_mb = frame.nbytes / (1024 * 1024)  # Size in MB
-        total_size_gb = (frame_size_mb * total_frames) / 1024  # Total size in GB
-        
-        return {
-            "total_frames": total_frames,
-            "fps": fps,
-            "resolution": f"{width}x{height}",
-            "estimated_size_gb": total_size_gb
-        }
+        cap.set(cv2.CAP_PROP_POS_AVI_RATIO, 1.0)
+        pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+        if pos_msec and pos_msec > 0:
+            return pos_msec / 1000.0
+        return None
     finally:
         cap.release()
 
 
-# Function that scans all videos
+def check_video_info(video_path: Path) -> dict:
+    """
+    Extract: duration, total_frames, fps, resolution, size_gb, bitrate_mbps
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video file: {video_path}")
+
+    try:
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 0.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0
+    finally:
+        cap.release()
+
+    size_bytes = video_path.stat().st_size
+    size_gb = size_bytes / (1024 ** 3)
+
+    duration_s = None
+    if total_frames > 0 and fps and fps > 0:
+        duration_s = total_frames / fps
+
+    if duration_s is None or duration_s == 0:
+        fallback_s = _safe_duration_via_ratio(video_path)
+        if fallback_s and fallback_s > 0:
+            duration_s = fallback_s
+
+    bitrate_mbps = (size_bytes * 8 / duration_s / 1e6) if duration_s else None
+
+    return {
+        "duration_hhmmss": _fmt_duration_hhmmss(duration_s),
+        "total_frames": total_frames,
+        "fps": fps,
+        "resolution": f"{width}x{height}",
+        "size_gb": round(size_gb, 2),
+        "bitrate_mbps": round(bitrate_mbps, 3) if bitrate_mbps else None,
+    }
+
+
+# ---------- Main scan + CSV writing ----------
+
 def scan_videos_and_write_csvs(
     videos_root: Path,
-    suffix: str = ".avi",
+    suffixes: Iterable[str] = (".mp4", ".avi", ".mkv", ".mov"),
     overwrite: bool = True,
-) -> dict:
-    """
-    Scan videos under `videos_root` expecting naming convention:
-      {camera}_{date}-{clockstart}-{clockend}.avi
+) -> Tuple[Dict[str, Path], Dict[str, Path]]:
 
-    Creates one CSV per camera:  {camera}_meta.csv  in  out_root / "meta"
-
-    CSV columns: date, clock, total_frames, fps, resolution, estimated_size_gb
-    Returns a dict: camera_name -> path_to_csv
-    """
     videos_root = videos_root.resolve()
+    suffixes_set = {s.lower() for s in suffixes}
 
-    # Regex: capture camera, date (YYYYMMDD), start/end (hhmmss), allowing '_' or '-' as separators
-    pat = re.compile(r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})\.mp4$',re.IGNORECASE)
+    pat = re.compile(
+        r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})$',
+        re.IGNORECASE
+    )
 
-    # Arrays that gather rows and error rows per camera
     rows_per_camera = {}
     errors_per_camera = {}
 
-    # Loop directories to extract info
-    for path in videos_root.rglob(f"*{suffix}"):
-        
-        fname = path.name
- 
-        # >>> Ignore AppleDouble/metadata artifacts <<<
-        if fname.startswith(('._')):
+    for path in videos_root.rglob("*"):
+        if path.is_dir():
             continue
-        m = pat.match(fname)
+        if path.suffix.lower() not in suffixes_set:
+            continue
+
+        stem = path.stem
+        if stem.startswith("._"):
+            continue
+
+        m = pat.match(stem)
         if not m:
             continue
 
         camera = m.group("camera")
         date = m.group("date")
-        clock_start = m.group("start")
-        clock_end = m.group("end")
+        time = m.group("start")
+        # clock_end parsed but not used anymore
 
-        # Extract video info; on error, log to per-camera error CSV accumulator
         try:
             info = check_video_info(path)
-        
-        except Exception as e:
-            errors_per_camera.setdefault(camera, []).append({
-                "date": date,
-                "clock_start": clock_start,
-                "clock_end": clock_end,
-                "error_message": str(e),
-                "estimated_size_gb": round(os.path.getsize(path) / (1024**3),2),
-                "path": str(path.relative_to(videos_root)),
-            })
-            continue
 
-        row = {
-            "date": date,
-            "clock_start": clock_start,
-            "clock_end": clock_end,
-            "total_frames": info["total_frames"],
-            "fps": info["fps"],
-            "resolution": info["resolution"],
-            "estimated_size_gb": round(info["estimated_size_gb"],2),
-            "path": str(path.relative_to(videos_root)),
-        }
-        rows_per_camera.setdefault(camera, []).append(row)
+            row = {
+                "date_yyyymmdd": date,
+                "time_hhmmss": time,
+                "duration_hhmmss": info["duration_hhmmss"],
+                "total_frames": info["total_frames"],
+                "fps": info["fps"],
+                "resolution": info["resolution"],
+                "bitrate_mbps": info["bitrate_mbps"],
+                "size_gb": info["size_gb"],
+                "path": str(path.resolve()),
+            }
+            rows_per_camera.setdefault(camera, []).append(row)
+
+        except Exception as e:
+            try:
+                fallback_size_gb = round(path.stat().st_size / (1024 ** 3), 2)
+            except Exception:
+                fallback_size_gb = None
+
+            errors_per_camera.setdefault(camera, []).append({
+                "date_yyyymmdd": date,
+                "time_hhmmss": time,
+                "duration_hhmmss": info["duration_hhmmss"],
+                "total_frames": info["total_frames"],
+                "fps": info["fps"],
+                "resolution": info["resolution"],
+                "bitrate_mbps": info["bitrate_mbps"],
+                "size_gb": info["size_gb"],
+                "error_message": str(e)
+            })
 
     # Write meta CSVs
     camera_to_csv = {}
     for camera, rows in rows_per_camera.items():
-        # Sort by date then start time inside 'clock'
-        rows.sort(key=lambda r: (r["date"], r["clock_start"]))
+        rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
 
-        csv_path = video_dir / f"_{camera}_meta.csv"
+        csv_path = videos_root / f"_{camera}_meta.csv"
         camera_to_csv[camera] = csv_path
         write_header = overwrite or not csv_path.exists()
-        mode = "w" if write_header else "a"
-        
-        with csv_path.open(mode, newline="", encoding="utf-8") as f:
+
+        with csv_path.open("w" if write_header else "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["date", "clock_start", "clock_end", "total_frames", "fps", "resolution", "estimated_size_gb", "path"],
+                fieldnames=[
+                    "date_yyyymmdd",
+                    "time_hhmmss",
+                    "duration_hhmmss",
+                    "total_frames",
+                    "fps",
+                    "resolution",
+                    "bitrate_mbps",
+                    "size_gb",
+                    "path",
+                ],
             )
             if write_header:
                 writer.writeheader()
             writer.writerows(rows)
-        
+
     # Write error CSVs
     err_to_csv = {}
     for camera, rows in errors_per_camera.items():
-        # Sort by date then clock for consistency
-        rows.sort(key=lambda r: (r["date"], r["clock_start"]))
+        rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
 
-        err_csv_path = video_dir / f"_{camera}_error_log.csv"
+        err_csv_path = videos_root / f"_{camera}_error_log.csv"
         err_to_csv[camera] = err_csv_path
-        err_write_header = overwrite or not err_csv_path.exists()
-        mode = "w" if err_write_header else "a"
-        
-        with err_csv_path.open(mode, newline="", encoding="utf-8") as f:
+        write_header = overwrite or not err_csv_path.exists()
+
+        with err_csv_path.open("w" if write_header else "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["date", "clock_start", "clock_end", "error_message", "estimated_size_gb", "path"],
+                fieldnames=[
+                    "date_yyyymmdd",
+                    "time_hhmmss",
+                    "duration_hhmmss",
+                    "total_frames",
+                    "fps",
+                    "resolution",
+                    "bitrate_mbps",
+                    "size_gb",
+                    "path",
+                    "error_message"
+                ],
             )
             if write_header:
                 writer.writeheader()
             writer.writerows(rows)
 
-    if not rows_per_camera and not errors_per_camera:
-        # No videos matched or everything skipped silently; keep quiet per your requirement
-        pass
-
     return camera_to_csv, err_to_csv
 
-# Run the functions
-camera_csvs, err_csvs = scan_videos_and_write_csvs(video_dir, suffix=".mp4", overwrite=True)
 
-print(f"DONE.\n\nFollowing metadata files have been created:\n{camera_csvs}\n\nFollowing error log files have been created:\n{err_csvs}")
+# List created files
+camera_csvs, err_csvs = scan_videos_and_write_csvs(video_dir, overwrite=True)
+
+def format_dict_as_lines(d: dict) -> str:
+    if not d:
+        return "  (none)"
+    return "\n".join(f"  {cam} -> {path}" for cam, path in sorted(d.items()))
+
+print("Following metadata files were created:")
+print(format_dict_as_lines(camera_csvs))
+print("\nFollowing error log files were created:")
+print(format_dict_as_lines(err_csvs))
 
 # %% [markdown]
 # # Step 2: Frame Extraction
@@ -185,212 +246,327 @@ print(f"DONE.\n\nFollowing metadata files have been created:\n{camera_csvs}\n\nF
 # - `chunk_size`: Number of frames per processing chunk (affects memory usage)
 
 # %%
-import re
-import csv
-from pathlib import Path
-from tqdm import tqdm
-
 #########################
 ### DEFINE PARAMETERS ###
 #########################
 
 start_frame_number = 0
 end_frame_number = None    # process all frames
-every = 2
+every = 1                 # take every Nth frame
+
+overwrite_frames = True    # or True if you want to force re-extraction/deletion of older frames
+
+
+#########################
+### USER FILTERS ###
+#########################
+
+camera_filter = None       # e.g. "ilh-cam1-pt"
+start_date = None          # e.g. "20250426"
+end_date = None
+start_time = None          # e.g. "120000"
+end_time = None
+
 
 ###############################################
+# Filename parsing: <camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>.<ext>
+###############################################
 
-# File parsing: match "<camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>.<ext>"
-# Use greedy camera group to capture everything up to the last "_" before the date.
 VID_NAME_RE = re.compile(
     r'^(?P<camera>.+)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})\.(?P<ext>avi|mp4)$',
     re.IGNORECASE
 )
 
-def parse_video_name(video_path: Path):
-    """
-    Parse the video filename and return (camera, date, clock_start, clock_end).
-    """
+def parse_video_name(video_path: Path) -> Tuple[str, str, str, str]:
+    """Returns (camera, date, clock_start, clock_end)."""
     m = VID_NAME_RE.match(video_path.name)
     if not m:
         raise ValueError(f"Video filename does not match expected pattern: {video_path.name}")
-    camera = m.group("camera")
-    date = m.group("date")
-    clock_start = m.group("start")
-    clock_end = m.group("end")
-    return camera, date, clock_start, clock_end
+    return (
+        m.group("camera"),
+        m.group("date"),
+        m.group("start"),
+        m.group("end"),
+    )
 
 
 def target_frames_dir_for(video_path: Path, base_frames_dir: Path) -> Path:
-    """
-    frames/<camera>/<date>/<clock_start>-<clock_end>/
-    """
-    camera, date, clock_start, clock_end = parse_video_name(video_path)
-    clock_segment = f"{clock_start}-{clock_end}"
-    return base_frames_dir / camera / date / clock_segment
+    """frames/<camera>/<date>/<clock_start>/"""
+    camera, date, clock_start, _clock_end = parse_video_name(video_path)
+    return base_frames_dir / camera / date / clock_start
 
 
-def iter_videos(root: Path, suffixes=(".avi", ".mp4")):
+def iter_videos(root: Path, suffixes: Iterable[str] = (".avi", ".mp4")):
+    """Yield video files under root with allowed suffixes."""
     root = Path(root)
+    suffixes_lower = {s.lower() for s in suffixes}
     for p in root.rglob("*"):
         if not p.is_file():
             continue
-        name = p.name
-        # Ignore AppleDouble / metadata artifacts
-        if name.startswith(("._", ":_")):
+        if p.name.startswith(("._", ":_")):
             continue
-        if p.suffix.lower() in suffixes:
+        if p.suffix.lower() in suffixes_lower:
             yield p
 
 
-def load_allowed_from_meta(video_root: Path) -> set[tuple[str, str, str, str]]:
-    """
-    Reads per-camera meta TSV/CSV files (_{camera}_meta.csv) and returns a set of
-    (camera, date, clock_start, clock_end). Detects delimiter (comma, semicolon, tab, pipe),
-    trims whitespace, and handles UTF-8 BOM.
+###############################################
+### Helpers
+###############################################
 
-    Expected headers: date, clock_start, clock_end
+def _normalize_clock_start(val: str) -> str:
+    """Normalize to HHMMSS format."""
+    if val is None:
+        return ""
+    v = val.strip().replace(":", "").replace("-", "").replace(" ", "")
+    return v if len(v) == 6 and v.isdigit() else ""
+
+
+def _norm(val):
+    """Normalize user filter input."""
+    if val is None:
+        return None
+    val = val.strip().replace(":", "").replace("-", "").replace(" ", "")
+    return val if val else None
+
+start_date = _norm(start_date)
+end_date   = _norm(end_date)
+start_time = _norm(start_time)
+end_time   = _norm(end_time)
+
+def prepare_frames_dir(dest: Path, overwrite: bool):
     """
-    allowed: set[tuple[str, str, str, str]] = set()
+    Handles replacing or keeping existing frames folder before extraction.
+    """
+    if dest.exists():
+        if overwrite:
+            shutil.rmtree(dest)
+            dest.mkdir(parents=True, exist_ok=True)
+        else:
+            # If folder not empty → skip extraction entirely
+            if any(dest.iterdir()):
+                return False
+    else:
+        dest.mkdir(parents=True, exist_ok=True)
+    return True
+
+
+###############################################
+### LOAD ALLOWED METADATA
+###############################################
+
+def load_allowed_from_meta(video_root: Path) -> Set[Tuple[str, str, str]]:
+    """
+    Reads meta CSV files (_{camera}_meta.csv)
+    Returns set of (camera, date, clock_startHHMMSS).
+    """
+    allowed: Set[Tuple[str, str, str]] = set()
     video_root = Path(video_root)
 
-    # Use rglob in case meta files are in subfolders
     for meta_csv in video_root.rglob("_*_meta.csv"):
         name = meta_csv.name
-        if not (name.startswith("_") and name.endswith("_meta.csv")):
+        if not name.startswith("_") or not name.endswith("_meta.csv"):
             continue
 
-        camera = name[1:-9]  # remove leading "_" and trailing "_meta.csv"
+        camera = name[1:-9]  # strip "_" and "_meta.csv"
 
         with meta_csv.open("r", newline="", encoding="utf-8-sig") as f:
-            sample = f.read(8192)
-            f.seek(0)
+            sample = f.read(8192); f.seek(0)
             try:
                 dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
             except csv.Error:
-                # Fallback to comma
                 dialect = csv.excel
 
             reader = csv.DictReader(f, dialect=dialect)
-
-            # Normalize header variants (some editors truncate or rename headers)
-            # We'll map keys we care about to canonical names.
-            # Build a case-insensitive header map.
             if reader.fieldnames is None:
                 continue
+
             key_map = { (h or "").strip().lower(): h for h in reader.fieldnames }
 
             def get(row, *keys):
                 for k in keys:
                     src = key_map.get(k)
-                    if src and row.get(src) is not None:
-                        return row[src]
+                    if src and (val := row.get(src)) is not None:
+                        return val
                 return None
 
             for row in reader:
-                date = (get(row, "date") or "").strip()
-                clock_start = (get(row, "clock_start", "clock_sta") or "").strip()
-                clock_end   = (get(row, "clock_end") or "").strip()
+                date = (get(row, "date", "date_yyyymmdd") or "").strip()
+                clock_raw = (get(row, "time_hhmmss", "clock_start") or "").strip()
 
-                if not date or not clock_start or not clock_end:
+                clock = _normalize_clock_start(clock_raw)
+                if not date or not clock:
                     continue
 
-                allowed.add((camera, date, clock_start, clock_end))
+                allowed.add((camera, date, clock))
+
     return allowed
 
 
-# ---------- Main extraction ----------
+allowed_triples = load_allowed_from_meta(video_dir)
+print(f"Loaded {len(allowed_triples)} allowed entries.")
 
-allowed_quads = load_allowed_from_meta(video_dir)
-print(f"Loaded {len(allowed_quads)} allowed entries.")
+if not allowed_triples:
+    print("WARNING: No allowed entries found in metadata.")
+
+
+###############################################
+### VALIDATION OF USER FILTERS
+###############################################
+
+def validate_filters(allowed: Set[Tuple[str, str, str]]):
+    cams  = {c for (c,_,_) in allowed}
+    dates = {d for (_,d,_) in allowed}
+
+    if camera_filter and camera_filter not in cams:
+        raise ValueError(f"Camera '{camera_filter}' not found. Existing cameras: {sorted(cams)}")
+
+    if start_date and start_date not in dates:
+        raise ValueError(f"start_date '{start_date}' not found in metadata")
+    if end_date and end_date not in dates:
+        raise ValueError(f"end_date '{end_date}' not found in metadata")
+    if start_date and end_date and start_date > end_date:
+        raise ValueError(f"start_date > end_date")
+
+    if start_time and len(start_time) != 6:
+        raise ValueError("start_time must be HHMMSS")
+    if end_time and len(end_time) != 6:
+        raise ValueError("end_time must be HHMMSS")
+    if start_time and end_time and start_time > end_time:
+        raise ValueError(f"start_time > end_time")
+
+validate_filters(allowed_triples)
+
+
+###############################################
+### FILTER CHECK
+###############################################
+
+def passes_filters(camera: str, date: str, clock_start: str) -> bool:
+    """Return True if this video satisfies the user-defined filters."""
+    if camera_filter and camera != camera_filter:
+        return False
+
+    if start_date and date < start_date:
+        return False
+    if end_date and date > end_date:
+        return False
+
+    if start_time and clock_start < start_time:
+        return False
+    if end_time and clock_start > end_time:
+        return False
+
+    return True
+
+
+###############################################
+### MAIN EXTRACTION LOOP
+###############################################
 
 processed = 0
 skipped = 0
 
-# Optional: quick debug dump if nothing loaded
-if not allowed_quads:
-    print("WARNING: No allowed entries found. Check delimiter/headers in meta files.")
-
 for vp in tqdm(list(iter_videos(video_dir)), desc="Extracting frames"):
-    # Only process videos that are present in per-camera meta CSVs
     try:
-        camera, date, clock_start, clock_end = parse_video_name(vp)
+        camera, date, clock_start_raw, clock_end = parse_video_name(vp)
     except ValueError:
         skipped += 1
         continue
 
-    key = (camera, date, clock_start, clock_end)
-    if key not in allowed_quads:
+    clock_start = _normalize_clock_start(clock_start_raw)
+
+    key = (camera, date, clock_start)
+    if key not in allowed_triples or not passes_filters(camera, date, clock_start):
         skipped += 1
-        # Uncomment for targeted debugging of first few mismatches:
-        # if skipped <= 5:
-        #     print("Not in metadata:", key)
         continue
 
+    
+    
     dest = target_frames_dir_for(vp, frames_dir)
-    dest.mkdir(parents=True, exist_ok=True)
+    
+    # Option B behavior:
+    # overwrite_frames = True  -> delete + recreate
+    # overwrite_frames = False -> keep folder and ALWAYS extract
+    if overwrite_frames:
+        import shutil
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+    else:
+        dest.mkdir(parents=True, exist_ok=True)  # create if missing, keep existing as-is
+
+
 
     extract_config = {
         "video_path": vp,
-        "frames_dir": dest,          # hierarchical destination (camera/date/clock_start/clock_end)
+        "frames_dir": dest,
         "start_frame_number": start_frame_number,
-        "end_frame_number": end_frame_number,    # process all frames
-        "every": every,               # sampling
+        "end_frame_number": end_frame_number,
+        "every": every,
         "overwrite": False
     }
 
-    # Let errors bubble up if something is wrong in extraction
-    _first_frame = video_to_frames(**extract_config)
+    _first_frame = video_to_frames(**extract_config)  # noqa: F821
     processed += 1
 
 print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s).")
 
 
 # %%
-# Function that constructs paths to frames
 def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
     """
-    Walks a frames directory structured like:
-    
-        frame_dir / camera / date / clock / *.jpg
-        
-    and returns a DataFrame with columns:
-        camera, date, clock, frame_path
+    Walk a frames directory structured like:
+
+        frame_dir / camera / date / time_hhmmss / *.jpg
+
+    Returns a DataFrame with:
+        camera, date, time_hhmmss, frame_path
     """
-    
 
     frame_dir = frame_dir.resolve()
     print(frame_dir)
 
     rows = []
 
-    # Loop structure: camera → date → clock_segment → frames
+    # Loop structure: camera → date → time_hhmmss → frames
     for camera_dir in frame_dir.iterdir():
+        if not camera_dir.is_dir():
+            continue
         camera = camera_dir.name
 
         for date_dir in camera_dir.iterdir():
-            date = date_dir.name  # expect YYYYMMDD
+            if not date_dir.is_dir():
+                continue
+            date = date_dir.name  # e.g. "20250426"
 
-            for clock_dir in date_dir.iterdir():                   
-                parts = clock_dir.name.split("-")
-                clock_start, clock_end = parts
+            for time_dir in date_dir.iterdir():
+                if not time_dir.is_dir():
+                    continue
 
-                # Collect all JPG frames in this folder
-                for jpg in clock_dir.glob("*.jpg"):
-                    frame_path = jpg.resolve()
+                # folder name *is* time_hhmmss (already HHMMSS)
+                time_hhmmss = time_dir.name  
+
+                # Collect all JPG frames
+                for jpg in time_dir.glob("*.jpg"):
                     rows.append({
                         "camera": camera,
-                        "date": date,
-                        "clock_start": clock_start,
-                        "clock_end": clock_end,
-                        "frame_path": frame_path
+                        "date_yyyymmdd": date,
+                        "time_hhmmss": time_hhmmss,
+                        "frame_path": str(jpg.resolve())
                     })
 
-    df = pd.DataFrame(rows, columns=["camera", "date", "clock_start", "clock_end", "frame_path"])
+    df = pd.DataFrame(
+        rows, 
+        columns=["camera", "date_yyyymmdd", "time_hhmmss", "frame_path"]
+    )
 
     return df
 
+
+# Usage:
 df_frames = collect_frame_paths(frames_dir)
+df_frames.to_parquet(frames_dir/"_frame_paths.parquet", index=False)
+df_frames.to_csv(frames_dir/"_frame_paths.csv", index=False)
 
 # %% [markdown]
 # # Step 3: Orthrectification
@@ -409,12 +585,15 @@ gcp_time = "120000"           # in format HHMMSS
 
 #########################
 
+# %%
+df_frames = pd.read_parquet(frames_dir/"_frame_paths.parquet")
+
 # Function that loads the frame image
 def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
     df_sub = df_frames[
         (df_frames["camera"] == gcp_cam) &
-        (df_frames["date"] == gcp_date) &
-        (df_frames["clock_start"] == gcp_time)
+        (df_frames["date_yyyymmdd"] == gcp_date) &
+        (df_frames["time_hhmmss"] == gcp_time)
     ].copy()
     
     if df_sub.empty:
@@ -446,7 +625,7 @@ img = mpimg.imread(str(frame_path))
 
 points = []
 
-fig, ax = plt.subplots(figsize=(14,10))
+fig, ax = plt.subplots(figsize=(10,8))
 ax.imshow(img)
 ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{frame_path}")
 plt.axis("off")
@@ -498,94 +677,10 @@ else:
         writer.writerows(points)
     print(f"\nImage coordinates saved to:\n{gcps_file}")
     
-    gcps_img = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}_00_main.png")
+    gcps_img = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.png")
     plt.savefig(str(gcps_img))
     plt.close()
-    print(f"\nImage coordinates selection saved to:\n{gcps_img}")
-
-# %%
-# Export auxiliary imagery of later dates to check stable camera position
-
-gcp_check_dates = ["20250426","20250427"]         # in format YYYYMMDD
-gcp_check_time = "130000"                         # in format HHMMSS
-
-# Function that loads auxiliary imagery paths
-def get_gcp_frame_paths(
-    df_frames,
-    camera: str,
-    dates: list[str],
-    start_time: str,  # "HHMMSS"
-    target_basename: str = "0000000000.jpg"
-) -> list[str | None]:
-    """
-    For each date in `dates`, returns the frame_path matching:
-      camera == camera
-      date == normalized YYYYMMDD
-      clock == HHMMSS-(HHMMSS+59min)
-      basename == target_basename
-    If a given date has no match, returns None at that position.
-    """
-    norm_dates = [str(d).strip().zfill(8) for d in dates]
-    check_clock_exact = gcp_check_time+"-"+str(int(gcp_check_time)+5900)
-
-    # Pre-filter by camera/date/clock for speed
-    df_check = df_frames[
-        (df_frames["camera"] == camera) &
-        (df_frames["date"].astype(str).isin(norm_dates)) &
-        (df_frames["clock_start"] == gcp_check_time)
-    ].copy()
-
-    # Compute lowercase basenames
-    df_check["basename"] = (
-        df_check["frame_path"]
-        .astype(str)
-        .str.replace("\\", "/", regex=False)
-        .apply(lambda p: Path(p).name.lower())
-    )
-
-    # Filter to target basename only
-    hits = df_check[df_check["basename"].eq(target_basename.lower())].copy()
-
-    # Build a lookup (date -> list of paths); usually 1 per date
-    by_date = {}
-    for _, row in hits.iterrows():
-        d = str(row["date"]).strip().zfill(8)
-        by_date.setdefault(d, []).append(str(Path(row["frame_path"]).as_posix()))
-
-    # Return results aligned with input dates, using None when missing
-    check_results = []
-    for d in norm_dates:
-        paths_for_d = by_date.get(d, [])
-        check_results.append({
-            "date": d,
-            "clock_start": clock_start,
-            "frame_path": paths_for_d[0] if paths_for_d else None
-        })
-    
-    return pd.DataFrame(check_results)
-
-
-# Load auxiliary imagery paths
-check_results = get_gcp_frame_paths(df_frames, gcp_cam, gcp_check_dates, gcp_check_time)
-print("Following auxiliary imagery has been exported:")
-
-# Save auxiliary imagery
-n_aux = 1
-for ch_dat, ch_clo, ch_pat in zip(check_results.date,check_results.clock_start,check_results.frame_path):
-    img = mpimg.imread(str(ch_pat))
-    plt.close()
-    fig, ax = plt.subplots(figsize=(14, 10))
-    ax.imshow(img)
-    ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{ch_pat}")
-    ax.axis("off")
-    plt.tight_layout()
-    
-    check_img = gcps_dir / (f"{gcp_cam}_gcps_img_{ch_dat}_{ch_clo}_{n_aux:02d}_aux.png")
-    n_aux = n_aux + 1
-    print(check_img)
-    fig.savefig(str(check_img))
-    plt.close()
-
+    print(f"\nImage coordinates picture saved to:\n{gcps_img}")
 
 # %%
 # Load GCP image coordinates
@@ -653,7 +748,7 @@ with open(gcps_file_dist, "w", newline="") as f:
     for name, value in distances_print.items():
         writer.writerow([value])
 
-print(f"\nImage coordinates selection saved to:\n{gcps_file_dist}")
+print(f"\nGCPs real world distances saved to:\n{gcps_file_dist}")
 
 # %%
 # Load GCP real world distances
@@ -810,7 +905,7 @@ if 'transformed_img' in transformation and 'extent' in transformation:
 
 plt.tight_layout()
 
-ortho_check_file = gcps_dir / (f"{gcp_cam}_ortho_check_{gcp_date}_{gcp_time}.png")
+ortho_check_file = gcps_dir / (f"{gcp_cam}_orthorectification_{gcp_date}_{gcp_time}.png")
 plt.savefig(str(ortho_check_file))
 plt.show()
 #plt.close(fig)
@@ -837,6 +932,7 @@ raise SystemExit
 
 # %%
 # to do:
+# 0) clean up Step 3, make it repetitive and dynamic
 # 1) use function for all steps below
 # 2) make cross section selection dynamic
 # 3) add additional directories for outputs
@@ -1154,7 +1250,7 @@ stages = np.array(stages)
 
 # Create figure with two subplots
 plt.close()
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 6))
 
 # First subplot: Frame with cross-section points
 ax1.imshow(frame_rgb)
@@ -1190,6 +1286,11 @@ plt.show()
 # # Step 5: PIV Analysis
 
 # %%
+gcp_cam = "chamb_03"
+gcp_date = "20250223"         # in format YYYYMMDD
+gcp_time = "120000"
+
+# %%
 # Load transformation matrix
 transf_file = gcps_dir / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
 with open(transf_file, 'r') as f:
@@ -1199,10 +1300,6 @@ with open(transf_file, 'r') as f:
 sect_file = bathy_dir / (f"{gcp_cam}_sect_{gcp_date}_{gcp_time}.json")
 with open(sect_file, 'r') as f:
     xsections = json.load(f)
-
-gcp_cam = "chamb_03"
-gcp_date = "20250223"         # in format YYYYMMDD
-gcp_time = "120000"
 
 # Load image
 _,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
@@ -1308,7 +1405,7 @@ print(f"height: {bbox[3]:.1f}")
 # %%
 # %matplotlib inline
 
-frame_dir = frames_dir / (f"{gcp_cam}/{gcp_date}/120000-125900")
+frame_dir = frames_dir / (f"{gcp_cam}/{gcp_date}/120000")
 print(frame_dir)
 
 # Get two consecutive frames
@@ -1371,8 +1468,9 @@ piv_results = run_analyze_all(
     interrogation_area_2=piv_params["interrogation_area_2"]
 )
 
+# %%
 # Plot results
-plt.figure(figsize=(12, 8))
+plt.figure(figsize=(10, 8))
 
 # Display the first frame
 plt.imshow(frame1_rgb)
@@ -1462,3 +1560,84 @@ ui = VBox([slider_row, fig.canvas])
 display(ui)  # ✅ show exactly once
 
 # %%
+# Export auxiliary imagery of later dates to check stable camera position
+
+gcp_check_dates = ["20250426","20250427"]         # in format YYYYMMDD
+gcp_check_time = "130000"                         # in format HHMMSS
+
+# Function that loads auxiliary imagery paths
+def get_gcp_frame_paths(
+    df_frames,
+    camera: str,
+    dates: list[str],
+    start_time: str,  # "HHMMSS"
+    target_basename: str = "0000000000.jpg"
+) -> list[str | None]:
+    """
+    For each date in `dates`, returns the frame_path matching:
+      camera == camera
+      date == normalized YYYYMMDD
+      clock == HHMMSS-(HHMMSS+59min)
+      basename == target_basename
+    If a given date has no match, returns None at that position.
+    """
+    norm_dates = [str(d).strip().zfill(8) for d in dates]
+    check_clock_exact = gcp_check_time+"-"+str(int(gcp_check_time)+5900)
+
+    # Pre-filter by camera/date/clock for speed
+    df_check = df_frames[
+        (df_frames["camera"] == camera) &
+        (df_frames["date"].astype(str).isin(norm_dates)) &
+        (df_frames["clock_start"] == gcp_check_time)
+    ].copy()
+
+    # Compute lowercase basenames
+    df_check["basename"] = (
+        df_check["frame_path"]
+        .astype(str)
+        .str.replace("\\", "/", regex=False)
+        .apply(lambda p: Path(p).name.lower())
+    )
+
+    # Filter to target basename only
+    hits = df_check[df_check["basename"].eq(target_basename.lower())].copy()
+
+    # Build a lookup (date -> list of paths); usually 1 per date
+    by_date = {}
+    for _, row in hits.iterrows():
+        d = str(row["date"]).strip().zfill(8)
+        by_date.setdefault(d, []).append(str(Path(row["frame_path"]).as_posix()))
+
+    # Return results aligned with input dates, using None when missing
+    check_results = []
+    for d in norm_dates:
+        paths_for_d = by_date.get(d, [])
+        check_results.append({
+            "date": d,
+            "clock_start": clock_start,
+            "frame_path": paths_for_d[0] if paths_for_d else None
+        })
+    
+    return pd.DataFrame(check_results)
+
+
+# Load auxiliary imagery paths
+check_results = get_gcp_frame_paths(df_frames, gcp_cam, gcp_check_dates, gcp_check_time)
+print("Following auxiliary imagery has been exported:")
+
+# Save auxiliary imagery
+n_aux = 1
+for ch_dat, ch_clo, ch_pat in zip(check_results.date,check_results.clock_start,check_results.frame_path):
+    img = mpimg.imread(str(ch_pat))
+    plt.close()
+    fig, ax = plt.subplots(figsize=(14, 10))
+    ax.imshow(img)
+    ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{ch_pat}")
+    ax.axis("off")
+    plt.tight_layout()
+    
+    check_img = gcps_dir / (f"{gcp_cam}_gcps_img_{ch_dat}_{ch_clo}_{n_aux:02d}_aux.png")
+    n_aux = n_aux + 1
+    print(check_img)
+    fig.savefig(str(check_img))
+    plt.close()

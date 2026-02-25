@@ -20,6 +20,8 @@ from IPython.display import display
 from tablib import Dataset
 from PIL import Image
 from ipywidgets import FloatSlider, VBox, Label, HBox
+from typing import Iterable, Tuple, Dict, Optional, Set
+import shutil
 
 # ---- Helpers ---------------------------------------------------------------
 
