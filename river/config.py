@@ -39,16 +39,21 @@ def _env_path(var_name: str, default: Path) -> Path:
 _default_root = Path(__file__).resolve().parent
 
 root_dir   = _env_path("PROJECT_DIR", _default_root)
-data_dir   = _env_path("DATA_DIR",   root_dir / "data")
-results_dir= _env_path("RESULTS_DIR",root_dir / "results")
-video_dir  = _env_path("VIDEO_DIR",  data_dir / "videos")
+data_dir   = _env_path("DATA_DIR", root_dir / "data")
+
+video_dir  = _env_path("VIDEO_DIR", data_dir / "videos")
 frames_dir = _env_path("FRAMES_DIR", data_dir / "frames")
 gcps_dir =  _env_path("GCPS_DIR", data_dir / "gcps")
-bathy_dir =  _env_path("BATHY_DIR", data_dir / "bathymetry")
+bathy_dir =  _env_path("BATH_DIR", data_dir / "bathymetry")
+rect_dir = _env_path("RECT_DIR", data_dir / "orthorectification")
+
+results_dir= _env_path("RESULTS_DIR",root_dir / "results")
+piv_dir = _env_path("PIV_DIR", results_dir / "piv")
+disch_dir = _env_path("DISCH_DIR", results_dir / "discharge")
 
 
 # Ensure base folders exist
-for p in (data_dir,results_dir,video_dir, frames_dir,gcps_dir,bathy_dir):
+for p in (data_dir,video_dir, frames_dir,gcps_dir,bathy_dir,rect_dir,results_dir,piv_dir,disch_dir):
     p.mkdir(parents=True, exist_ok=True)
 
 
@@ -64,11 +69,14 @@ logger.info("Configured paths:")
 for name, p in {
     "root_dir": root_dir,
     "data_dir": data_dir,
-    "results_dir": results_dir,
     "video_dir": video_dir,
     "frames_dir": frames_dir,
     "gcps_dir": gcps_dir,
-    "bathy_dir": bathy_dir
+    "bathy_dir": bathy_dir,
+    "rect_dir": rect_dir,
+    "results_dir": results_dir,
+    "piv_dir": piv_dir,
+    "disch_dir": disch_dir
 }.items():
     logger.info("  %-12s -> %s", name, p)
 
