@@ -168,7 +168,7 @@ def scan_videos_and_write_csvs(
     for camera, rows in rows_per_camera.items():
         rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
 
-        csv_path = videos_root / f"_{camera}_meta.csv"
+        csv_path = videos_root / camera / f"_{camera}_meta.csv"
         camera_to_csv[camera] = csv_path
         write_header = overwrite or not csv_path.exists()
 
@@ -196,7 +196,7 @@ def scan_videos_and_write_csvs(
     for camera, rows in errors_per_camera.items():
         rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
 
-        err_csv_path = videos_root / f"_{camera}_error_log.csv"
+        err_csv_path = videos_root / camera / f"_{camera}_error_log.csv"
         err_to_csv[camera] = err_csv_path
         write_header = overwrite or not err_csv_path.exists()
 
@@ -524,7 +524,6 @@ def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
     """
 
     frame_dir = frame_dir.resolve()
-    print(frame_dir)
 
     rows = []
 
@@ -565,8 +564,10 @@ def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
 
 # Usage:
 df_frames = collect_frame_paths(frames_dir)
-df_frames.to_parquet(frames_dir/"_frame_paths.parquet", index=False)
+frames_file = frames_dir/"_frame_paths.parquet"
+df_frames.to_parquet(frames_file, index=False)
 df_frames.to_csv(frames_dir/"_frame_paths.csv", index=False)
+print(f'Frames DF saved to {str(frames_file).strip(".parquet")+".*"}')
 
 # %% [markdown]
 # # Step 3: Orthrectification
@@ -578,15 +579,12 @@ df_frames.to_csv(frames_dir/"_frame_paths.csv", index=False)
 # Adapt so you loop through it and do it once a day for each station
 
 # %%
-df_frames
-
-# %%
 #########################
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "chamb_03"
-gcp_date = "20250223"         # in format YYYYMMDD
+gcp_cam = "chamb_01"
+gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
@@ -987,81 +985,21 @@ raise SystemExit
 # 2) make cross section selection dynamic
 
 # %%
-
-# %%
-gcp_cam = "chamb_03"
-gcp_date = "20250223"         # in format YYYYMMDD
+gcp_cam = "chamb_01"
+gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"
 
+# %%
 # Load image
 _,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
 img = mpimg.imread(str(frame_path))
 
-# %%
-# Load GCP image coordinates
-points_img = []
-gcps_file = gcps_dir / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
-with open(gcps_file, newline="") as f:
-    reader = csv.reader(f)
-    for row in reader:
-        if not row:
-            continue
-        x = int(float(row[0]))
-        y = int(float(row[1]))
-        points_img.append((x, y))
-
-point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
-point_coords_pixel = dict(zip(point_img_keys, points_img))
-print(f"GCPs image coordinates:\n{point_coords_pixel}")
+# Do transformation
+transformation = transform(df_frames,gcp_cam,gcp_date,gcp_time)
 
 # %%
-# Load GCP real world distances
-gcps_real_dist_file = gcps_dir / f"{gcp_cam}_gcps_dist_real.csv"
-distances=[]
-with open(gcps_real_dist_file, newline="") as f:
-    reader = csv.reader(f)
-    for row in reader:
-        if not row:
-            continue
-        dist = float(row[0])
-        distances.append(dist)
+# Select cross section in image
 
-# Print real world coordinates
-print("GCPs real world distances:")
-print(distances)
-
-# %%
-# Calculate transformation matrix
-# Extract coordinates for transformation
-x1_pix, y1_pix = point_coords_pixel['point1']
-x2_pix, y2_pix = point_coords_pixel['point2']
-x3_pix, y3_pix = point_coords_pixel['point3']
-x4_pix, y4_pix = point_coords_pixel['point4']
-
-# Extract distances for transformation
-d12=distances[0]
-d23=distances[1]
-d34=distances[2]
-d41=distances[3]
-d13=distances[4]
-d24=distances[5]
-
-# Calculate transformation matrix
-transformation = oblique_view_transformation_matrix(
-    x1_pix, y1_pix,
-    x2_pix, y2_pix,
-    x3_pix, y3_pix,
-    x4_pix, y4_pix,
-    d12,
-    d23,
-    d34,
-    d41,
-    d13,
-    d24,
-    image_path=frame_path,
-)
-
-# %%
 # %matplotlib widget
 
 plt.close()
@@ -1141,10 +1079,10 @@ def onclick(event):
         ax.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#F5BF61', linewidth=2, zorder=4)
 
         # Save into a dict for clean access
-        point_coords_xs = {
+        point_coords_xs = [
             (x1_rw, y1_rw),
             (x2_rw, y2_rw),
-        }
+        ]
 
         print("2 points collected (real-world coords):")
         print(point_coords_xs)
@@ -1165,6 +1103,12 @@ cid = ax.figure.canvas.mpl_connect('button_press_event', onclick)
 plt.tight_layout()
 plt.show()
 
+# %% [markdown]
+# ### Select cross section in the displayed picture above
+
+# %%
+raise SystemExit
+
 # %%
 point_coords_xs
 
@@ -1174,7 +1118,8 @@ if not point_coords_xs:
 else:
     print(f"Selected cross-section coordinates (X/Y):\n{point_coords_xs}")
 
-    xs_file = gcps_dir / f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.csv"
+    xs_file = bathy_dir / gcp_cam / f"{gcp_cam}_xs_coord_{gcp_date}_{gcp_time}.csv"
+    xs_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Ensure list (not set)
     point_coords_xs = list(point_coords_xs)
@@ -1187,10 +1132,14 @@ else:
 
     print(f"\nCross-section coordinates saved to:\n{xs_file}")
 
+    xs_img = bathy_dir/gcp_cam/f'{gcp_cam}_xs_{gcp_date}_{gcp_time}.png'
+    plt.savefig(xs_img)
+    print(f"\nCross-section image saved to:\n{xs_img}")
+
 # %%
 # Load cross section point coordinates
 
-csv_cross_path = gcps_dir / (f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.csv")
+csv_cross_path = bathy_dir / gcp_cam / (f"{gcp_cam}_xs_coord_{gcp_date}_{gcp_time}.csv")
 
 points_cross = []
 with open(csv_cross_path, newline="") as f:
@@ -1202,28 +1151,26 @@ with open(csv_cross_path, newline="") as f:
         y = float(row[1])
         points_cross.append((x, y))
 
-#point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
-#point_coords_pixel = dict(zip(point_img_keys, points_img))
-
-print(points_cross)
-
 x_le = points_cross[0][0]
 y_le = points_cross[0][1]
 x_ri = points_cross[1][0]
 y_ri = points_cross[1][1]
 
+print(f"Selected cross-section coordinates (X/Y):\n{points_cross}")
+
+# %%
+# Define number of "stations", i.e. analysis/bathymetry points across section
+num_stations = 10
+
 # %%
 # Define bathymetry
-bath_file = bathy_dir / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
+bath_file = bathy_dir / gcp_cam / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
 
 lvl = 0.2
 
 le_bath = x_le - x_le
 ri_bath = x_ri - x_le
 mid_bath = ri_bath/2
-
-
-import numpy as np
 
 xL = le_bath
 xM = mid_bath
@@ -1233,14 +1180,14 @@ lvl = lvl
 def p(x):
     return lvl * (x - xM)**2 / ((xL - xM)*(xR - xM)) * (-1)
 
-xs = np.linspace(xL, xR, 15)
+xs = np.linspace(xL, xR, num_stations)
 points = [(float(x), float(p(x))) for x in xs]
 
 
 # Write CSV
 with open(bath_file, "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["d", "h"])   # headers
+    writer.writerow(["d", "h"])   # header
     writer.writerows(points)      # the data rows
 
 # %%
@@ -1252,10 +1199,10 @@ xsections = {
         "east_r": x_ri,      # Right bank easting
         "north_r": y_ri,      # Right bank northing
         "level": lvl,       # Water level
-        "num_stations": 5,   # Number of analysis points
+        "num_stations": num_stations,   # Number of analysis points
         "alpha": 1,           # Velocity correction coefficient
         "bath": str(bath_file),  # Path to bathymetry file
-        "left_station": 2.0   # Offset for first station from left bank
+        "left_station": 0   # Offset for first station from left bank
     }
 }
 
@@ -1263,12 +1210,17 @@ xsections = {
 left_pixel = transform_real_world_to_pixel(xsections["section1"]["east_l"], 
                                          xsections["section1"]["north_l"], 
                                          transformation_matrix)
+print("Real world coordinates of cross section points")
+print(f"Left river bank: {left_pixel}")
 right_pixel = transform_real_world_to_pixel(xsections["section1"]["east_r"], 
                                           xsections["section1"]["north_r"], 
                                           transformation_matrix)
+print(f"Left river bank: {right_pixel}")
 # Calculate real-world length of the section
 rw_length = np.sqrt((xsections["section1"]["east_r"] - xsections["section1"]["east_l"])**2 + 
                     (xsections["section1"]["north_r"] - xsections["section1"]["north_l"])**2)
+print("\nReal world cross section length")
+print(f"%0.2f" %rw_length + " m")
 
 # Update the dictionary with additional values
 xsections["section1"].update({
@@ -1280,7 +1232,7 @@ xsections["section1"].update({
 })
 
 # Save cross-sections to JSON
-sect_file = bathy_dir / (f"{gcp_cam}_sect_{gcp_date}_{gcp_time}.json")
+sect_file = bathy_dir / gcp_cam / (f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.json")
 with open(sect_file, 'w') as f:
     json.dump(xsections, f, indent=2)
 print(f"\nCross-sections data saved to {sect_file}")
@@ -1326,36 +1278,37 @@ ax2.legend()
 
 # Adjust layout
 plt.tight_layout()
-
-#image_output_file = output_dir / "05_cross-sec_bath.png"
-#plt.savefig(str(image_output_file))
 plt.show()
+
+# %%
+# Save bathymetry image
+bath_img = bathy_dir / gcp_cam / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.png")
+plt.savefig(bath_img)
 
 # %% [markdown]
 # # Step 5: PIV Analysis
 
 # %%
-gcp_cam = "chamb_03"
-gcp_date = "20250223"         # in format YYYYMMDD
+gcp_cam = "chamb_01"
+gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"
 
 # %%
 # Load transformation matrix
-transf_file = gcps_dir / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
+transf_file = rect_dir / gcp_cam / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
 with open(transf_file, 'r') as f:
     transformation_matrix = np.array(json.load(f))
 
 # Load cross-sections data
-sect_file = bathy_dir / (f"{gcp_cam}_sect_{gcp_date}_{gcp_time}.json")
+sect_file = bathy_dir / gcp_cam / (f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.json")
 with open(sect_file, 'r') as f:
     xsections = json.load(f)
 
 # Load image
-_,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+frame,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
 img = mpimg.imread(str(frame_path))
 
 # Load and display frame
-frame = cv2.imread(str(frame_path))
 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 plt.figure(figsize=(12, 8))
@@ -1440,8 +1393,10 @@ plt.title('Frame with Analysis Region and Mask')
 plt.axis('off')
 plt.tight_layout()
 
-#image_output_file = output_dir / "06_analysis_mask.png"
-#plt.savefig(str(image_output_file))
+# Save analysis region and mask image
+piv_reg_img = piv_dir / gcp_cam / f"{gcp_cam}_piv_mask_{gcp_date}_{gcp_time}.png"
+piv_reg_img.parent.mkdir(parents=True, exist_ok=True)
+plt.savefig(piv_reg_img)
 
 plt.show()
 
@@ -1538,18 +1493,231 @@ plt.quiver(x, y, u, -v,color='blue')
 plt.title('PIV Median Results')
 plt.axis('off')
 plt.tight_layout()
-plt.show()
 
-# Save cross-sections to JSON
-output_file = output_dir / "piv_results.json"
-with open(output_file, 'w') as f:
+# Save piv results image
+piv_res_img = piv_dir / gcp_cam / f"{gcp_cam}_piv_result_{gcp_date}_{gcp_time}.png"
+piv_res_img.parent.mkdir(parents=True, exist_ok=True)
+plt.savefig(piv_res_img)
+plt.show()
+print(f"\nPIV results image saved to {piv_res_img}")
+
+# Save piv results
+piv_res_file = piv_dir / gcp_cam / f"{gcp_cam}_piv_result_{gcp_date}_{gcp_time}.json"
+with open(piv_res_file, 'w') as f:
     json.dump(piv_results, f, indent=2)
-print(f"\nPIV results data saved to {output_file}")
+print(f"\nPIV results data saved to {piv_res_file}")
 
 # %% [markdown]
 # # Step 6: Discharge Calculation
 
 # %%
+gcp_cam = "chamb_01"
+gcp_date = "20260223"         # in format YYYYMMDD
+gcp_time = "120000"
+
+# %%
+## Define paths
+
+transformation_file = rect_dir / gcp_cam / f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json"
+xsections_file = bathy_dir / gcp_cam / f"{gcp_cam}_xs_{gcp_date}_{gcp_time}.json"
+piv_results_file = piv_dir / gcp_cam / f"{gcp_cam}_piv_result_{gcp_date}_{gcp_time}.json"
+
+# %%
+## Load data
+
+# Load transformation matrix
+with open(transformation_file, 'r') as f:
+    transformation_matrix = np.array(json.load(f))
+
+# Load cross-sections data
+with open(xsections_file, 'r') as f:
+    xsections = json.load(f)
+
+# Load piv results data
+with open(piv_results_file, 'r') as f:
+    piv_results = json.load(f)
+
+# Load the image
+df_frames = pd.read_parquet(frames_dir/"_frame_paths.parquet")
+frame, frame_rgb, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time) # loads by default 0th frame
+frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+# %%
+fps = 30
+step = 1
+
+alpha = xsections['section1']['alpha']
+num_stations = xsections['section1']['num_stations']
+summary = update_current_x_section(xsections,
+                                   piv_results,
+                                   transformation_matrix,
+                                   step,
+                                   fps,
+                                   0,
+                                   alpha = alpha,
+                                   num_stations= num_stations,
+                                   interpolate=True)
+
+# %%
+# Visualize mask overlaid on the frame
+plt.figure(figsize=(12, 8))
+
+# Display the original frame first
+plt.imshow(frame_rgb)
+# Add the Cross Section
+plt.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]], 
+         [xsections["section1"]["yl"], xsections["section1"]["yr"]], 
+         color='#F5BF61', linewidth=2)  # Line connecting points
+plt.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=10)  # Left point
+plt.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=10)  # Right point
+
+width_arrow = 0.8* np.mean(np.diff(summary['section1']['distance']))
+arrows, magnitude_range = calculate_multiple_arrows(
+    summary['section1']['east'],
+    summary['section1']['north'],
+    summary['section1']['filled_streamwise_velocity_magnitude'],
+    transformation_matrix,
+    frame_rgb.shape[0],
+    width=width_arrow
+)
+
+# Plot each arrow
+for arrow in arrows:
+    plt.fill(arrow['points'][:, 0], arrow['points'][:, 1], color=arrow['color'],alpha=0.7)
+
+plt.title('Frame with Velocity Profile')
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# %%
+print(summary['section1']['distance'])
+
+# %%
+# Create figure with custom grid layout
+fig = plt.figure(figsize=(20, 12))
+gs = gridspec.GridSpec(3, 2, width_ratios=[1.2, 1], height_ratios=[1, 1, 1])
+
+# Left column: Frame with velocity arrows
+ax0 = plt.subplot(gs[:, 0])  # Spans all rows in first column
+ax0.imshow(frame_rgb)
+
+# Plot cross-section line
+ax0.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]], 
+         [xsections["section1"]["yl"], xsections["section1"]["yr"]], 
+         color='#F5BF61', linewidth=2)
+
+# Plot end points
+ax0.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 
+         'o', color='#ED6B57', markersize=10, label='Left bank')
+ax0.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 
+         'o', color='#62C655', markersize=10, label='Right bank')
+
+# Calculate and plot velocity arrows
+width_arrow = 0.8 * np.mean(np.diff(summary['section1']['distance']))
+arrows, magnitude_range = calculate_multiple_arrows(
+    summary['section1']['east'],
+    summary['section1']['north'],
+    summary['section1']['filled_streamwise_velocity_magnitude'],
+    transformation_matrix,
+    frame_rgb.shape[0],
+    width=width_arrow
+)
+
+# Plot arrows
+for arrow in arrows:
+    ax0.fill(arrow['points'][:, 0], arrow['points'][:, 1], 
+             color=arrow['color'], alpha=0.7)
+ax0.set_title('Cross-section with Velocity Vectors', pad=20)
+ax0.axis('off')
+ax0.legend()
+
+# Right column plots
+# 1. Discharge Distribution (as bars with colors based on values)
+ax1 = plt.subplot(gs[0, 1])
+bar_width = 0.7 * np.mean(np.diff(summary['section1']['distance']))
+
+# Create color array based on values
+colors = []
+for q in summary['section1']['Q_portion']:
+    if q > 0.1:
+        colors.append('#ED6B57')
+    elif q > 0.05:
+        colors.append('#F5BF61')
+    else:
+        colors.append('#62C655')
+
+ax1.bar(summary['section1']['distance'], 
+        summary['section1']['Q_portion'],
+        width=bar_width,
+        color=colors,
+        alpha=0.9,
+        align='center')
+ax1.set_title('Discharge Distribution')
+ax1.set_ylabel('Proportion of Total Discharge')
+ax1.grid(True, alpha=0.3)
+
+# Add legend for discharge colors
+from matplotlib.patches import Patch
+legend_elements = [
+    Patch(facecolor='#ED6B57', alpha=0.9, label='> 0.1'),
+    Patch(facecolor='#F5BF61', alpha=0.9, label='0.05 - 0.1'),
+    Patch(facecolor='#62C655', alpha=0.9, label='< 0.05')
+]
+ax1.legend(handles=legend_elements, title='Discharge Proportion')
+
+# 2. Velocity Profile - black line with points
+ax2 = plt.subplot(gs[1, 1])
+# Add 5th and 95th percentile area
+ax2.fill_between(summary['section1']['distance'],
+                 summary['section1']['5th_percentile'],
+                 summary['section1']['95th_percentile'],
+                 color='#ED6B57', alpha=0.3, label='5th-95th percentile')
+# Add standard deviation area
+ax2.fill_between(summary['section1']['distance'],
+                 summary['section1']['minus_std'],
+                 summary['section1']['plus_std'],
+                 color='#62C655', alpha=0.3, label='±1 std')
+ax2.plot(summary['section1']['distance'], 
+         summary['section1']['filled_streamwise_velocity_magnitude'],
+         'k-', linewidth=2)  # black line
+ax2.plot(summary['section1']['distance'], 
+         summary['section1']['filled_streamwise_velocity_magnitude'],
+         'ko', markersize=6)  # black points
+ax2.set_title('Velocity Profile')
+ax2.set_ylabel('Velocity (m/s)')
+ax2.grid(True, alpha=0.3)
+ax2.legend()
+
+# 3. Depth Profile - black line with light blue fill
+ax3 = plt.subplot(gs[2, 1])
+ax3.plot(summary['section1']['distance'], 
+         summary['section1']['depth'],
+         'k-', linewidth=2)  # black line
+ax3.fill_between(summary['section1']['distance'],
+                 summary['section1']['depth'],
+                 color='#6CD4FF', alpha=0.5)  # light blue fill
+ax3.set_title('Depth Profile')
+ax3.set_xlabel('Distance from Left Bank (m)')
+ax3.set_ylabel('Depth (m)')
+ax3.grid(True, alpha=0.3)
+ax3.invert_yaxis()  # Invert y-axis to show depth properly
+
+ax1.get_shared_x_axes().join(ax1, ax2, ax3)
+
+# Add overall title and adjust layout
+plt.suptitle('Cross-section Analysis Summary', y=1.02, fontsize=16)
+plt.tight_layout()
+plt.show()
+
+# Print numerical summary
+print(f"Total Discharge: {summary['section1']['total_Q']:.2f} ± {summary['section1']['total_q_std']:.2f} m³/s")
+print(f"Mean Velocity: {summary['section1']['mean_V']:.2f} m/s")
+print(f"Total Width: {summary['section1']['total_W']:.2f} m")
+print(f"Maximum Depth: {summary['section1']['max_depth']:.2f} m")
+
+# %%
+# check why percentile plot is still off
 
 # %%
 
