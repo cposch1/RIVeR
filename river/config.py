@@ -11,6 +11,8 @@ from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.patches import Rectangle
+import matplotlib.gridspec as gridspec
+from matplotlib.patches import Patch
 import json
 import csv
 import math
@@ -95,6 +97,9 @@ try:
 
     from river.utils.arrow_utils import calculate_multiple_arrows
     from river.utils.visualization import plot_camera_solution
+
+    from river.core.loading_data import (load_frame,load_gcps_img,load_gcps_real,load_dist,load_xs_img)
+    from river.core.image_rectification import transform
 
 except Exception as e:
     # Avoid hard failure if import path not ready; user can still import explicitly.

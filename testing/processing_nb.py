@@ -583,39 +583,11 @@ print(f'Frames DF saved to {str(frames_file).strip(".parquet")+".*"}')
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "chamb_01"
+gcp_cam = "chamb_03"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
-
-# %%
-# Function that loads the frame image
-def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
-    df_sub = df_frames[
-        (df_frames["camera"] == gcp_cam) &
-        (df_frames["date_yyyymmdd"] == gcp_date) &
-        (df_frames["time_hhmmss"] == gcp_time)
-    ].copy()
-    
-    if df_sub.empty:
-        raise FileNotFoundError("Camera/date/time not valid")
-    
-    df_sub["basename"] = (
-        df_sub["frame_path"]
-        .astype(str)
-        .str.replace("\\", "/", regex=False)
-        .apply(lambda p: Path(p).name.lower())
-    )
-    hits = df_sub[df_sub["basename"].eq("0000000000.jpg")]
-    if hits.empty:
-        raise FileNotFoundError("No '0000000000.jpg' in that segment")
-    
-    frame_path = str(Path(hits.iloc[0]["frame_path"]).as_posix())
-    frame = cv2.imread(str(frame_path))
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    return frame, frame_rgb, frame_path
-
 
 # %%
 # Load frame
@@ -696,51 +668,6 @@ else:
 
 
 # %%
-# Function that loads GCP image coordinates
-def load_gcps_img(gcp_cam,gcp_date,gcp_time):
-    points_img = []
-    gcps_img_file = gcps_dir / gcp_cam / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
-    with open(gcps_img_file, newline="") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if not row:
-                continue
-            x = int(float(row[0]))
-            y = int(float(row[1]))
-            points_img.append((x, y))
-    
-    point_img_keys = [f"point{i}" for i in range(1, len(points_img) + 1)]
-    point_coords_pixel = dict(zip(point_img_keys, points_img))
-    print(f"GCPs image coordinates:\n{point_coords_pixel}")
-
-    return point_coords_pixel
-
-
-# %%
-# Function that loads GCP real world coordinates
-def load_gcps_real(gcp_cam):
-    points_real = []
-    gcps_real_file = gcps_dir / gcp_cam / f"{gcp_cam}_gcps_real.csv"
-    with open(gcps_real_file, newline="") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if not row:
-                continue
-            x = float(row[0])
-            y = float(row[1])
-            points_real.append((x, y))
-    
-    point_real_keys = [f"point{i}" for i in range(1, len(points_real) + 1)]
-    point_coords_world = dict(zip(point_real_keys, points_real))
-    
-    # Print real world coordinates
-    print("GCPs real world coordinates:")
-    print(point_coords_world)
-
-    return point_coords_world
-
-
-# %%
 # Function for calculating euclidian distances
 def dist(p1, p2):
     x1, y1 = p1
@@ -776,66 +703,6 @@ with open(gcps_dist_file, "w", newline="") as f:
         writer.writerow([value])
 
 print(f"\nGCPs real world distances saved to:\n{gcps_dist_file}")
-
-
-# %%
-# Function that loads GCP real world distances
-def load_dist(gcp_cam):
-    gcps_dist_file = gcps_dir / gcp_cam / f"{gcp_cam}_gcps_dist.csv"
-    distances=[]
-    with open(gcps_dist_file, newline="") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if not row:
-                continue
-            dist = float(row[0])
-            distances.append(dist)
-    
-    # Print real world coordinates
-    print("GCPs real world distances:")
-    print(distances)
-    
-    return distances
-
-
-# %%
-# Function for performing transformation
-def transform(df_frames,gcp_cam,gcp_date,gcp_time):
-    points = load_gcps_img(gcp_cam,gcp_date,gcp_time)
-    dist = load_dist(gcp_cam)
-    _, _, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
-    
-    # Extract coordinates for transformation
-    x1_pix, y1_pix = points['point1']
-    x2_pix, y2_pix = points['point2']
-    x3_pix, y3_pix = points['point3']
-    x4_pix, y4_pix = points['point4']
-
-    # Extract distances for transformation
-    d12=dist[0]
-    d23=dist[1]
-    d34=dist[2]
-    d41=dist[3]
-    d13=dist[4]
-    d24=dist[5]
-
-    # Calculate transformation matrix
-    transformation = oblique_view_transformation_matrix(
-        x1_pix, y1_pix,
-        x2_pix, y2_pix,
-        x3_pix, y3_pix,
-        x4_pix, y4_pix,
-        d12,
-        d23,
-        d34,
-        d41,
-        d13,
-        d24,
-        image_path=frame_path,
-    )
-
-    return transformation
-
 
 # %%
 # Do transformation
@@ -980,12 +847,10 @@ raise SystemExit
 # %%
 # to do:
 # 0) Make Step 3 repetitive and dynamic
-# 1) clean up below (use function defined above, update paths, delete redundancies)
-# 1) use functions for all steps
 # 2) make cross section selection dynamic
 
 # %%
-gcp_cam = "chamb_01"
+gcp_cam = "chamb_03"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"
 
@@ -1138,18 +1003,7 @@ else:
 
 # %%
 # Load cross section point coordinates
-
-csv_cross_path = bathy_dir / gcp_cam / (f"{gcp_cam}_xs_coord_{gcp_date}_{gcp_time}.csv")
-
-points_cross = []
-with open(csv_cross_path, newline="") as f:
-    reader = csv.reader(f)
-    for row in reader:
-        if not row:
-            continue
-        x = float(row[0])
-        y = float(row[1])
-        points_cross.append((x, y))
+points_cross = load_xs_img(gcp_cam,gcp_date,gcp_time)
 
 x_le = points_cross[0][0]
 y_le = points_cross[0][1]
@@ -1160,7 +1014,7 @@ print(f"Selected cross-section coordinates (X/Y):\n{points_cross}")
 
 # %%
 # Define number of "stations", i.e. analysis/bathymetry points across section
-num_stations = 10
+num_stations = 15
 
 # %%
 # Define bathymetry
@@ -1289,7 +1143,7 @@ plt.savefig(bath_img)
 # # Step 5: PIV Analysis
 
 # %%
-gcp_cam = "chamb_01"
+gcp_cam = "chamb_03"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"
 
@@ -1511,7 +1365,7 @@ print(f"\nPIV results data saved to {piv_res_file}")
 # # Step 6: Discharge Calculation
 
 # %%
-gcp_cam = "chamb_01"
+gcp_cam = "chamb_03"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"
 
@@ -1591,9 +1445,6 @@ plt.tight_layout()
 plt.show()
 
 # %%
-print(summary['section1']['distance'])
-
-# %%
 # Create figure with custom grid layout
 fig = plt.figure(figsize=(20, 12))
 gs = gridspec.GridSpec(3, 2, width_ratios=[1.2, 1], height_ratios=[1, 1, 1])
@@ -1632,6 +1483,37 @@ ax0.set_title('Cross-section with Velocity Vectors', pad=20)
 ax0.axis('off')
 ax0.legend()
 
+# Stats text
+textstr_stat = (
+    f"Total Discharge: {summary['section1']['total_Q']:.2f} ± {summary['section1']['total_q_std']:.2f} m³/s\n"
+    f"Mean Velocity: {summary['section1']['mean_V']:.2f} m/s\n"
+    f"Total Width: {summary['section1']['total_W']:.2f} m\n"
+    f"Maximum Depth: {summary['section1']['max_depth']:.2f} m"
+)
+
+ax0.text(
+    0.01, -0.05, textstr_stat,
+    transform=ax0.transAxes,
+    fontsize=12,
+    verticalalignment='top',
+    bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
+)
+
+# Title text
+textstr_tit = (
+    f"Camera: {gcp_cam}\n"
+    f"Date: {gcp_date}\n"
+    f"Time: {gcp_time}"
+)
+
+ax0.text(
+    0.01, 1.05, textstr_tit,
+    transform=ax0.transAxes,
+    fontsize=12,
+    verticalalignment='bottom',
+    bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
+)
+
 # Right column plots
 # 1. Discharge Distribution (as bars with colors based on values)
 ax1 = plt.subplot(gs[0, 1])
@@ -1658,7 +1540,6 @@ ax1.set_ylabel('Proportion of Total Discharge')
 ax1.grid(True, alpha=0.3)
 
 # Add legend for discharge colors
-from matplotlib.patches import Patch
 legend_elements = [
     Patch(facecolor='#ED6B57', alpha=0.9, label='> 0.1'),
     Patch(facecolor='#F5BF61', alpha=0.9, label='0.05 - 0.1'),
@@ -1708,6 +1589,12 @@ ax1.get_shared_x_axes().join(ax1, ax2, ax3)
 # Add overall title and adjust layout
 plt.suptitle('Cross-section Analysis Summary', y=1.02, fontsize=16)
 plt.tight_layout()
+
+# Save discharge results image
+dis_res_img = disch_dir / gcp_cam / f"{gcp_cam}_dis_img_{gcp_date}_{gcp_time}.png"
+dis_res_img.parent.mkdir(parents=True, exist_ok=True)
+plt.savefig(dis_res_img)
+
 plt.show()
 
 # Print numerical summary
@@ -1716,10 +1603,78 @@ print(f"Mean Velocity: {summary['section1']['mean_V']:.2f} m/s")
 print(f"Total Width: {summary['section1']['total_W']:.2f} m")
 print(f"Maximum Depth: {summary['section1']['max_depth']:.2f} m")
 
-# %%
-# check why percentile plot is still off
+# Print saving info
+print("Discharge results image saved to:")
+print(dis_res_img)
 
 # %%
+sec1 = summary["section1"]
+
+# Identify which keys are arrays (per-station) vs scalars (metadata)
+array_like_keys = []
+scalar_keys = []
+
+for k, v in sec1.items():
+    if isinstance(v, (list, tuple, np.ndarray)):
+        array_like_keys.append(k)
+    else:
+        scalar_keys.append(k)
+
+# A) Metadata: one row with scalar fields
+meta = {k: sec1[k] for k in scalar_keys}
+# Keep a pointer to the original paths, or replace with relative path if desired
+df_meta = pd.DataFrame([meta])
+
+# B) Stations table: stack arrays into rows
+# Ensure consistent lengths
+lengths = {k: len(sec1[k]) for k in array_like_keys}
+if len(set(lengths.values())) != 1:
+    raise ValueError(f"Inconsistent array lengths in per-station arrays: {lengths}")
+
+df_stations = pd.DataFrame({k: sec1[k] for k in array_like_keys})
+
+# Optionally, add contextual fields for joins/filtering
+for extra in ["east_l", "north_l", "east_r", "north_r", "level", "alpha"]:
+    if extra in sec1:
+        df_meta[extra] = sec1[extra]  # stored once in meta
+# If you want to “carry” identifiers in the stations table
+df_stations.insert(0, "section", "section1")
+
+# Save both
+dis_res_data = (disch_dir / gcp_cam)
+
+# Parquet engines: 'pyarrow' (recommended) or 'fastparquet'
+engine = "pyarrow"
+
+df_meta.to_parquet(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.parquet", index=False, engine=engine)
+df_meta.to_csv(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.csv", index=False)
+
+df_stations.to_parquet(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.parquet", index=False, engine=engine)
+df_stations.to_csv(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.csv", index=False)
+
+print("Saved section1 meta + stations tables.")
+
+# %%
+agg = summary["summary"]
+
+df_agg_wide = []
+for stat_name, metrics in agg.items():
+    row = {"stat": stat_name, **metrics}
+    df_agg_wide.append(row)
+df_agg_wide = pd.DataFrame(df_agg_wide)
+df_agg_wide.insert(0, "section", "section1")
+
+dis_res_sum = (disch_dir / gcp_cam)
+
+df_agg_wide.to_parquet(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.parquet", index=False, engine=engine)
+df_agg_wide.to_csv(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.csv", index=False)
+
+print("Saved aggregated stats in wide format.")
+
+# %%
+df_meta = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.parquet")
+df_data = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.parquet")
+df_sum = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.parquet")
 
 # %%
 
