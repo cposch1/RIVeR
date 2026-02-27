@@ -14,14 +14,14 @@ export RECT_DIR="$DATA_DIR/orthorectification"
 
 export RESULTS_DIR="$PROJECT_DIR/results"
 export PIV_DIR="$RESULTS_DIR/piv"
-export DISCh_DIR="$RESULTS_DIR/discharge"
+export DISCH_DIR="$RESULTS_DIR/discharge"
 
 case ":$PYTHONPATH:" in
   *":$PROJECT_DIR:"*) ;;
   *) export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" ;;
 esac
 
-mkdir -p "$DATA_DIR" "$VIDEO_DIR" "$FRAMES_DIR" "$RESULTS_DIR"
+mkdir -p "$DATA_DIR" "$VIDEO_DIR" "$FRAMES_DIR" "$GCPS_DIR" "$BATH_DIR" "$RECT_DIR" "$RESULTS_DIR" "$PIV_DIR" "$DISCH_DIR"
 
 echo "PROJECT_DIR = $PROJECT_DIR"
 echo "DATA_DIR = $DATA_DIR"

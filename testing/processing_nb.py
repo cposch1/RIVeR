@@ -511,8 +511,28 @@ for vp in tqdm(list(iter_videos(video_dir)), desc="Extracting frames"):
 
 print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s).")
 
+# %% [markdown]
+# # Step 3: Orthrectification
+
+# %% [markdown]
+# ### Repeat lines until "End of Step 3" for each station
 
 # %%
+# Adapt so you loop through it and do it once a day for each station
+
+# %%
+#########################
+### DEFINE PARAMETERS ###
+#########################
+
+gcp_cam = "chamb_02"
+gcp_date = "20260223"         # in format YYYYMMDD
+gcp_time = "120000"           # in format HHMMSS
+
+#########################
+
+# %%
+# Function that creates frame_path df
 def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
     """
     Walk a frames directory structured like:
@@ -562,32 +582,12 @@ def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
     return df
 
 
-# Usage:
+# Create frame path df
 df_frames = collect_frame_paths(frames_dir)
 frames_file = frames_dir/"_frame_paths.parquet"
 df_frames.to_parquet(frames_file, index=False)
 df_frames.to_csv(frames_dir/"_frame_paths.csv", index=False)
 print(f'Frames DF saved to {str(frames_file).strip(".parquet")+".*"}')
-
-# %% [markdown]
-# # Step 3: Orthrectification
-
-# %% [markdown]
-# ### Repeat lines until "End of Step 3" for each station
-
-# %%
-# Adapt so you loop through it and do it once a day for each station
-
-# %%
-#########################
-### DEFINE PARAMETERS ###
-#########################
-
-gcp_cam = "chamb_02"
-gcp_date = "20260223"         # in format YYYYMMDD
-gcp_time = "120000"           # in format HHMMSS
-
-#########################
 
 # %%
 # Load frame
@@ -1611,6 +1611,7 @@ print("Discharge results image saved to:")
 print(dis_res_img)
 
 # %%
+# Save results metadata and data
 sec1 = summary["section1"]
 
 # Identify which keys are arrays (per-station) vs scalars (metadata)
@@ -1649,15 +1650,18 @@ dis_res_data = (disch_dir / gcp_cam)
 # Parquet engines: 'pyarrow' (recommended) or 'fastparquet'
 engine = "pyarrow"
 
-df_meta.to_parquet(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.parquet", index=False, engine=engine)
-df_meta.to_csv(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.csv", index=False)
+dis_res_meta_file = dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}."
+df_meta.to_parquet(f"{dis_res_meta_file}parquet", index=False, engine=engine)
+df_meta.to_csv(f"{dis_res_meta_file}csv", index=False)
+print(f"Saved discharge metadata to {dis_res_meta_file}*")
 
-df_stations.to_parquet(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.parquet", index=False, engine=engine)
-df_stations.to_csv(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.csv", index=False)
-
-print("Saved section1 meta + stations tables.")
+dis_res_data_file = dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}."
+df_stations.to_parquet(f"{dis_res_data_file}parquet", index=False, engine=engine)
+df_stations.to_csv(f"{dis_res_data_file}csv", index=False)
+print(f"Saved discharge data to {dis_res_data_file}*")
 
 # %%
+# Save results summary
 agg = summary["summary"]
 
 df_agg_wide = []
@@ -1669,18 +1673,19 @@ df_agg_wide.insert(0, "section", "section1")
 
 dis_res_sum = (disch_dir / gcp_cam)
 
-df_agg_wide.to_parquet(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.parquet", index=False, engine=engine)
-df_agg_wide.to_csv(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.csv", index=False)
-
-print("Saved aggregated stats in wide format.")
+dis_res_sum_file = dis_res_sum/ f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}."
+df_agg_wide.to_parquet(f"{dis_res_sum_file}parquet", index=False, engine=engine)
+df_agg_wide.to_csv(f"{dis_res_sum_file}csv", index=False)
+print(f"Saved discharge summary to {dis_res_sum_file}*")
 
 # %%
+# Load results data
 df_meta = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.parquet")
 df_data = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.parquet")
 df_sum = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.parquet")
 
 # %%
-df_data
+df_sum
 
 # %%
 # to do:

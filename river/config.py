@@ -55,7 +55,7 @@ disch_dir = _env_path("DISCH_DIR", results_dir / "discharge")
 
 
 # Ensure base folders exist
-for p in (data_dir,video_dir, frames_dir,gcps_dir,bathy_dir,rect_dir,results_dir,piv_dir,disch_dir):
+for p in (data_dir,video_dir,frames_dir,gcps_dir,bathy_dir,rect_dir,results_dir,piv_dir,disch_dir):
     p.mkdir(parents=True, exist_ok=True)
 
 
