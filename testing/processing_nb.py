@@ -945,6 +945,8 @@ gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
+pt_data = "pt_test.csv"
+
 # %%
 # Load image
 df_frames = pd.read_parquet(frames_dir/"_frame_paths.parquet")
@@ -958,6 +960,46 @@ transformation = transform(df_frames,gcp_cam,gcp_date,gcp_time)
 transf_file = rect_dir / gcp_cam / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
 with open(transf_file, 'r') as f:
     transformation_matrix = np.array(json.load(f))
+
+# Load PT data
+pt_data_file = pts_dir / pt_data
+df_pt = load_pt(pt_data_file)
+
+# Load video metadata
+meta_file = video_dir / gcp_cam / f"_{gcp_cam}_meta.csv"
+df_meta = pd.read_csv(meta_file)
+
+# %%
+# Subset pt data based on video date, time and duration
+
+# Filter the row matching date + time
+row = df_meta[
+    (df_meta["date_yyyymmdd"] == int(gcp_date)) &
+    (df_meta["time_hhmmss"] == int(gcp_time))
+].iloc[0]
+
+# Compute start & end timestamp
+start_ts = pd.to_datetime(f"{gcp_date} {gcp_time}", format="%Y%m%d %H%M%S")
+duration_str = str(row["duration_hhmmss"]).zfill(6)
+duration_s = f"{duration_str[0:2]}:{duration_str[2:4]}:{duration_str[4:6]}"
+duration_td = pd.to_timedelta(duration_s)
+end_ts = start_ts + duration_td
+
+print("Video start:", start_ts)
+print("Video end  :", end_ts)
+
+# Convert df_pt timestamp and filter by video window
+df_pt["timestamp"] = pd.to_datetime(
+    df_pt["date_yyyymmdd"].astype(str) + " " + df_pt["time_hhmmss"].astype(str),
+    format="%Y%m%d %H%M%S"
+)
+
+mask = (df_pt["timestamp"] >= start_ts) & (df_pt["timestamp"] <= end_ts)
+df_window = df_pt.loc[mask]
+
+# Compute mean depth for that video clip
+depth_avg = df_window["depth_m"].mean()
+print("Average depth over video period:", round(depth_avg,2), "m")
 
 # %%
 # Select cross section in image

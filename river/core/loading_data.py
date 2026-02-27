@@ -109,3 +109,22 @@ def load_xs_img(gcp_cam,gcp_date,gcp_time):
             points_cross.append((x, y))
 
     return points_cross
+
+# Function that loads PT data
+def load_pt(pt_data_file):
+    
+    # Load CSV from string
+    df = pd.read_csv(pt_data_file)
+    
+    # Convert timestamp column
+    df["Time"] = pd.to_datetime(df["Time"])
+    
+    # Create required columns
+    df["date_yyyymmdd"] = df["Time"].dt.strftime("%Y%m%d")
+    df["time_hhmmss"] = df["Time"].dt.strftime("%H%M%S")
+    df["depth_m"] = df["device_frmpayload_data_Water_deep_cm.mean"]/100
+    
+    # Select only required columns
+    df = df[["date_yyyymmdd", "time_hhmmss", "depth_m"]]
+    
+    return df

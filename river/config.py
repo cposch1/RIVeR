@@ -48,6 +48,7 @@ frames_dir = _env_path("FRAMES_DIR", data_dir / "frames")
 gcps_dir =  _env_path("GCPS_DIR", data_dir / "gcps")
 bathy_dir =  _env_path("BATH_DIR", data_dir / "bathymetry")
 rect_dir = _env_path("RECT_DIR", data_dir / "orthorectification")
+pts_dir = _env_path("PTS_DIR", data_dir / "pts")
 
 results_dir= _env_path("RESULTS_DIR",root_dir / "results")
 piv_dir = _env_path("PIV_DIR", results_dir / "piv")
@@ -55,7 +56,7 @@ disch_dir = _env_path("DISCH_DIR", results_dir / "discharge")
 
 
 # Ensure base folders exist
-for p in (data_dir,video_dir,frames_dir,gcps_dir,bathy_dir,rect_dir,results_dir,piv_dir,disch_dir):
+for p in (data_dir,video_dir,frames_dir,gcps_dir,bathy_dir,rect_dir,pts_dir,results_dir,piv_dir,disch_dir):
     p.mkdir(parents=True, exist_ok=True)
 
 
@@ -76,6 +77,7 @@ for name, p in {
     "gcps_dir": gcps_dir,
     "bathy_dir": bathy_dir,
     "rect_dir": rect_dir,
+    "pts_dir": pts_dir,
     "results_dir": results_dir,
     "piv_dir": piv_dir,
     "disch_dir": disch_dir
@@ -98,7 +100,7 @@ try:
     from river.utils.arrow_utils import calculate_multiple_arrows
     from river.utils.visualization import plot_camera_solution
 
-    from river.core.loading_data import (load_frame,load_gcps_img,load_gcps_real,load_dist,load_xs_img)
+    from river.core.loading_data import (load_frame,load_gcps_img,load_gcps_real,load_dist,load_xs_img,load_pt)
     from river.core.image_rectification import transform
 
 except Exception as e:
