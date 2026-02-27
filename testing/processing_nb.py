@@ -583,7 +583,7 @@ print(f'Frames DF saved to {str(frames_file).strip(".parquet")+".*"}')
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "chamb_03"
+gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
@@ -845,22 +845,23 @@ raise SystemExit
 # # Step 4: Cross Section Selection
 
 # %%
-# to do:
-# 0) Make Step 3 repetitive and dynamic
-# 2) make cross section selection dynamic
-
-# %%
-gcp_cam = "chamb_03"
+gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
-gcp_time = "120000"
+gcp_time = "120000"           # in format HHMMSS
 
 # %%
 # Load image
+df_frames = pd.read_parquet(frames_dir/"_frame_paths.parquet")
 _,frame_rgb,frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
 img = mpimg.imread(str(frame_path))
 
 # Do transformation
 transformation = transform(df_frames,gcp_cam,gcp_date,gcp_time)
+
+# Load transformation matrix
+transf_file = rect_dir / gcp_cam / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")
+with open(transf_file, 'r') as f:
+    transformation_matrix = np.array(json.load(f))
 
 # %%
 # Select cross section in image
@@ -1092,6 +1093,8 @@ with open(sect_file, 'w') as f:
 print(f"\nCross-sections data saved to {sect_file}")
 
 # %%
+# %matplotlib inline
+
 # Load and plot bathymetry data
 data = Dataset()
 with open(bath_file, 'r') as f:
@@ -1143,9 +1146,9 @@ plt.savefig(bath_img)
 # # Step 5: PIV Analysis
 
 # %%
-gcp_cam = "chamb_03"
+gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
-gcp_time = "120000"
+gcp_time = "120000"           # in format HHMMSS
 
 # %%
 # Load transformation matrix
@@ -1365,9 +1368,9 @@ print(f"\nPIV results data saved to {piv_res_file}")
 # # Step 6: Discharge Calculation
 
 # %%
-gcp_cam = "chamb_03"
+gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
-gcp_time = "120000"
+gcp_time = "120000"           # in format HHMMSS
 
 # %%
 ## Define paths
@@ -1675,6 +1678,16 @@ print("Saved aggregated stats in wide format.")
 df_meta = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_meta_{gcp_date}_{gcp_time}.parquet")
 df_data = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_data_{gcp_date}_{gcp_time}.parquet")
 df_sum = pd.read_parquet(dis_res_data / f"{gcp_cam}_dis_sum_{gcp_date}_{gcp_time}.parquet")
+
+# %%
+df_data
+
+# %%
+# to do:
+# 1) Insert real world coordinates of PT and display in images and consider in bathymetry calculation
+# 2) Make Step 3 (orthrectification) dynamic
+# 3) Make Step 4 (cross section selection) dynamic
+# 4) Make Steo 5 (water depth and baythymetry) dynamic
 
 # %%
 
