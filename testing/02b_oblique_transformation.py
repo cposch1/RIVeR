@@ -50,7 +50,7 @@ from river.core.coordinate_transform import (
 )
 
 # Set up paths 
-frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
+frame_path = Path("data/frames/ilh-cam1-pt_20250426-120000-125900/0000000000.jpg")
 csv_img_path = Path("results/ilh/grps_img.csv")
 csv_real_path = Path("data/grps/grps_real.csv")
 output_dir = Path("results/ilh")
@@ -288,8 +288,8 @@ if 'transformed_img' in transformation and 'extent' in transformation:
     # Points 2-4 in blue
     ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='#6CD4FF', markersize=3)
     
-    ax2.set_xlabel('East (m)')
-    ax2.set_ylabel('North (m)')
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
     ax2.set_title('Orthorectified Image')
 
 plt.tight_layout()
@@ -359,8 +359,10 @@ plt.close()
 # %%
 # %matplotlib widget
 
-plt.plot(figsize=(18, 9))
+
+plt.figure(figsize=(18, 9))
 ax = plt.gca()
+
 
 extent = transformation['extent']
 ax.imshow(transformation['transformed_img'], extent=extent)
@@ -392,7 +394,7 @@ ax.text(x_pos + scale_length_rounded/2, y_pos + 2*bar_height,
 
 ax.set_xlabel('East (m)')
 ax.set_ylabel('North (m)')
-ax.set_title('Cross-section in orthorectified image')
+ax.set_title('Cross-section selection in orthorectified image')
 
 #plt.tight_layout()
 

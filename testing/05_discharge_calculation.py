@@ -167,9 +167,6 @@ summary = update_current_x_section(xsections,
 # The visualization integrates spatial context with quantitative measurements, allowing for comprehensive interpretation of the flow characteristics at the cross-section.
 
 # %%
-summary['section1']
-
-# %%
 # Visualize mask overlaid on the frame
 plt.figure(figsize=(12, 8))
 

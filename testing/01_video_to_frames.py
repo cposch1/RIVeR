@@ -99,7 +99,7 @@ def check_video_info(video_path: Path) -> dict:
         cap.release()
 
 # Example usage
-video_path = video_dir / "ilh"/ "ilh_20250426-200000-205900.avi"  # Replace with your video path
+video_path = video_dir / "20250426-000000-235900"/ "ilh-cam1-pt_20250426-120000-125900.avi"  # Replace with your video path
 try:
     info = check_video_info(video_path)
     print("\nVideo Information:")
@@ -165,6 +165,7 @@ import matplotlib.pyplot as plt
 
 try:
     # Read the first frame
+    print(first_frame)
     img = cv2.imread(str(first_frame))
     if img is None:
         raise ValueError(f"Could not read image from {first_frame}")
@@ -234,6 +235,8 @@ except Exception as e:
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
+plt.close()
+
 img = mpimg.imread(str(first_frame))
 
 points = []
@@ -275,7 +278,6 @@ import csv
 
 with open(csv_output_file, "w", newline="") as f:
     writer = csv.writer(f)
-    #writer.writerow(["x", "y"])   # header
     writer.writerows(points)
 
 # %%
