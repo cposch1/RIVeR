@@ -13,6 +13,36 @@
 #     name: python3
 # ---
 
+# %% [markdown]
+# # RIVeR: Rectification of Image Velocimetry Results
+#
+# RIVeR (Rectification of Image Velocimetry Results) is a Python package designed for processing river flow videos to obtain velocity fields and discharge estimates. It supports three main filming scenarios:
+#
+# ## RIVeR-ICE: Rectification of Image Velocimetry Results - Integrated Channel Evolution
+#
+# RIVeR-ICE (Rectification of Image Velocimetry Results - Integrated Channel Evolution) is an extension of RIVeR that....
+#
+# ## Prerequisites
+#
+# Before starting, ensure you have:
+#
+# - Python 3.11 or later
+# - RIVeR package installed
+# - Required dependencies (numpy, opencv-python, scipy)
+#
+# ## Required folder hierarchy
+#
+# ...
+#
+# ## Required file terminology
+#
+# ...
+
+# %% [markdown]
+# # Step 0: Imports
+#
+# Imports functions and dependencies from the package
+
 # %%
 from river.config import *
 
@@ -20,7 +50,7 @@ from river.config import *
 # %% [markdown]
 # # Step 1: Metadata Extraction
 #
-# Extract video metadata
+# Automated video metadata extraction from data in the video folder
 
 # %%
 def _fmt_duration_hhmmss(total_seconds: Optional[float]) -> str:
@@ -239,21 +269,38 @@ print(format_dict_as_lines(err_csvs))
 # %% [markdown]
 # # Step 2: Frame Extraction
 #
-# Extract video frames
+# ## Why Extract Frames?
+# - PIV analysis requires sequential image pairs
+# - Easier memory management than processing full videos
+# - Allows for quality control and frame selection
+# - Enables parallel processing in later steps
+#
+# ## Prerequisites
+# - RIVeR package installed
+# - Video file(s) of river flow
+# - Sufficient storage space for frames (tip: estimate ~0.5-2MB per frame)
+#
+# ## Parameters
 # - `every`: Extract every nth frame (e.g., every=2 takes every second frame)
 # - `start_frame_number`: Begin extraction from this frame
 # - `end_frame_number`: Stop extraction at this frame
-# - `chunk_size`: Number of frames per processing chunk (affects memory usage)
+# - `overwrite_frames`: Option for overwriting existing data in frames folder
+# - 
+# ## Filters
+# - `camera_filter`: Extract only for this camera
+# - `start_date`: Begin extraction from this date
+# - `end_date`: Stop extraction at this date
+# - `start_time`: Begin extraction from this time
+# - `end_time`: Stop extraction at this time
 
 # %%
 #########################
 ### DEFINE PARAMETERS ###
 #########################
 
+every = 1  # take every Nth frame
 start_frame_number = 0
-end_frame_number = None    # process all frames
-every = 1                 # take every Nth frame
-
+end_frame_number = None    # process all frames            
 overwrite_frames = True    # or True if you want to force re-extraction/deletion of older frames
 
 
@@ -513,6 +560,31 @@ print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s)."
 
 # %% [markdown]
 # # Step 3: Orthrectification
+#
+# Performs coordinate transformation for oblique (side-view) river videos using RIVeR that accounts for perspective distortion.
+#
+# ## Prerequisites
+#
+# - Completed frame extraction
+# - An oblique view frame to work with
+# - 4 GCPs (ground control points) with known real-world coordinates 
+#
+# ## Analysis requirements
+#
+# - GCP well distributed across the frame
+# - Include points at different depths in the scene
+# - GCP selection at the surface, not at the top of the GCP marker
+# - Real-world coordinates saved in the gcps folder
+# - Distances between points are automatically calculated
+#
+# Point ordering is critical for correct transformation:
+# - Point 1 must be the most upstream and leftmost point in your view
+# - Remaining points (2, 3, and 4) must be defined in counterclockwise order
+# - Example ordering:
+#   * Point 1: Upstream-left
+#   * Point 2: Upstream-right
+#   * Point 3: Downstream-right
+#   * Point 4: Downstream-left
 
 # %% [markdown]
 # ### Repeat lines until "End of Step 3" for each station
@@ -842,7 +914,31 @@ print(f"Transformation matrix saved to\n{transf_file}")
 raise SystemExit
 
 # %% [markdown]
-# # Step 4: Cross Section Selection
+# # Step 4: Cross-Section Selection and Bathymetry
+#
+# This step defines and analyzes river cross-sections using RIVeR.
+# - Define cross-section lines from orthorectified image
+# - Define water depth and calculate idealized bathymetry data 
+# - Calculate section properties like area and width
+# - Prepare cross-sections for velocity analysis
+#
+# ## Prerequisites
+#
+# - Completed orthrectification
+# - Transformation matrix from previous steps
+# - Water depth
+#
+# ## Parameters
+#
+# - `num_stations`: Defines number of steps (resolution) in the cross-section for bahymetry calculation and PIV vectors
+# - `alpha_vel`: Ratio between surface and depth-averaged velocity (typically 0.85-1.0)
+
+# %%
+# Define number of "stations", i.e. analysis/bathymetry points across section
+num_stations = 15
+
+# Define vertical velocity correction coefficient
+alpha_vel = 1
 
 # %%
 gcp_cam = "chamb_02"
@@ -1014,10 +1110,6 @@ y_ri = points_cross[1][1]
 print(f"Selected cross-section coordinates (X/Y):\n{points_cross}")
 
 # %%
-# Define number of "stations", i.e. analysis/bathymetry points across section
-num_stations = 15
-
-# %%
 # Define bathymetry
 bath_file = bathy_dir / gcp_cam / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
 
@@ -1055,7 +1147,7 @@ xsections = {
         "north_r": y_ri,      # Right bank northing
         "level": lvl,       # Water level
         "num_stations": num_stations,   # Number of analysis points
-        "alpha": 1,           # Velocity correction coefficient
+        "alpha": alpha_vel,           # Velocity correction coefficient
         "bath": str(bath_file),  # Path to bathymetry file
         "left_station": 0   # Offset for first station from left bank
     }
@@ -1144,6 +1236,30 @@ plt.savefig(bath_img)
 
 # %% [markdown]
 # # Step 5: PIV Analysis
+#
+# This steps configures and performs the Particle Image Velocimetry (PIV) analysis using RIVeR.
+# - Sets interrogation window parameters
+# - Calculates optimal ROI height
+# - Creates masks for analysis regions from selected cross-section
+# - Runs PIV analysis
+#
+# ## Prerequisites
+#
+# - Completed cross-section definition
+# - Extracted video frames ready for analysis
+# - Transformation matrix and cross-section data saved
+#
+# ## Parameters
+# - `interrogation_area_1`: First pass window size should be larger to capture larger displacements
+# - `interrogation_area_2`: Second pass window size should be smaller for better spatial resolution
+# - `overlap`: Window overlap determines the density of velocity vectors
+# - `window_size`: Base window size for height calculation
+
+# %%
+interrogation_area_1 = 128  # Size of first interrogation window
+interrogation_area_2 = 64  # Size of second interrogation window
+overlap = 64             # Size overlap
+window_size = 32           # Base window size for height calculation
 
 # %%
 gcp_cam = "chamb_02"
@@ -1177,11 +1293,11 @@ plt.show()
 # %%
 # Define PIV analysis parameters
 piv_params = {
-    "interrogation_area_1": 128,  # Size of first interrogation window
-    "interrogation_area_2": 64,   # Size of second interrogation window
-    "overlap": 64,              # Size overlap
+    "interrogation_area_1": interrogation_area_1,  # Size of first interrogation window
+    "interrogation_area_2": interrogation_area_2,   # Size of second interrogation window
+    "overlap": overlap,              # Size overlap
     "num_stations": xsections["section1"]["num_stations"],
-    "window_size": 32           # Base window size for height calculation
+    "window_size": window_size           # Base window size for height calculation
 }
 
 print("PIV Analysis Parameters:")
@@ -1189,6 +1305,32 @@ print(f"First pass window size: {piv_params['interrogation_area_1']} pixels")
 print(f"Second pass window size: {piv_params['interrogation_area_2']} pixels")
 print(f"Window overlap: {piv_params['overlap']/piv_params['interrogation_area_1']*100}%")
 print(f"Number of stations: {piv_params['num_stations']}")
+
+# %% [markdown]
+# ## Step 5.1: Analysis Mask and Bounding Box
+#
+# Create a mask and bounding box to optimize PIV analysis performance and focus on relevant areas:
+#
+# - **ROI (Region of Interest) Bounding Box**: 
+#   - Defines a rectangular region that encompasses all cross-sections
+#   - Significantly reduces computation time by limiting PIV analysis to only this region
+#   - All areas outside this box are excluded from processing entirely
+#
+# - **Analysis Mask**:
+#   - Further refines the analysis area within the ROI
+#   - White areas (mask value = 1) indicate regions where PIV calculations will be retained
+#   - Black areas (mask value = 0) indicate regions where PIV results will be filtered out
+#   - Helps eliminate spurious velocities from areas not relevant to the flow analysis
+#   - Particularly useful for removing:
+#     - Bank areas
+#     - Vegetation
+#     - Static objects
+#     - Areas outside the water surface
+#
+# The combination of ROI and mask ensures that:
+# 1. Processing time is minimized by focusing only on relevant areas
+# 2. Memory usage is optimized by excluding unnecessary regions
+# 3. Final results contain only meaningful velocity measurements from the areas of interest
 
 # %%
 # Calculate recommended ROI height
@@ -1201,6 +1343,7 @@ height_roi = recommend_height_roi(
 print(f"\nRecommended ROI height: {height_roi:.2f} meters")
 
 # %%
+# Plot analysis mask and bounding box
 # %matplotlib inline
 
 # Create mask and get bounding box
@@ -1263,7 +1406,33 @@ print(f"y: {bbox[1]:.1f}")
 print(f"width: {bbox[2]:.1f}")
 print(f"height: {bbox[3]:.1f}")
 
+# %% [markdown]
+# ## Step 5.2: Test PIV Analysis
+#
+# Performs a test PIV analysis on a pair of consecutive frames to verify our configuration and visualize the results. This test will help us validate our ROI and mask settings before running the full analysis.
+#
+# Important: The PIV analysis at this stage produces a displacement field measured in pixels - this represents how far features have moved between the two frames. These displacements are not yet true velocities (which would require:
+# - Conversion from pixel space to real-world coordinates using our transformation matrix
+# - Division by the time interval between frames to get velocity units (e.g., m/s)
+#
+# For this test, we'll use default values for the optional parameters. Here are the available options:
+#
+# - `mask_auto` (default=True): Automatically applies a Gaussian filter to limit peak search area
+# - `multipass` (default=True): Performs multiple passes to improve accuracy, using the first pass result to guide the second
+# - `standard_filter` (default=True): Removes outliers based on standard deviation of velocities
+# - `standard_threshold` (default=4): Number of standard deviations for outlier detection
+# - `median_test_filter` (default=True): Additional outlier removal using local median test
+# - `epsilon` (default=0.02): Tolerance parameter for median test filtering
+# - `threshold` (default=2): Threshold for normalized fluctuations in median test
+# - `filter_grayscale` (default=True): Converts images to grayscale before processing
+# - `filter_clahe` (default=True): Applies Contrast Limited Adaptive Histogram Equalization
+# - `clip_limit_clahe` (default=5): Upper limit for contrast enhancement in CLAHE
+#
+# This test will help us validate that our PIV settings are appropriate before proceeding with the full analysis and conversion to real-world velocities.
+
 # %%
+# Test PIV
+
 # %matplotlib inline
 
 frame_dir = frames_dir / (f"{gcp_cam}/{gcp_date}/120000")
@@ -1319,8 +1488,59 @@ plt.axis('off')
 plt.tight_layout()
 plt.show()
 
+# %% [markdown]
+# ## Step 5.3: Full PIV Analysis and Results Saving
+#
+# Now that we've validated our PIV configuration through testing, we'll perform the complete analysis on all frames in our dataset. This step:
+# 1. Processes all image pairs in the sequence
+# 2. Computes median displacement fields
+# 3. Visualizes the results
+# 4. Saves the analysis output for later use
+#
+# ### Key Elements of Full Analysis
+#
+# - **Multiple Frame Processing**: Unlike our test which used just two frames, this analyzes all sequential frame pairs
+# - **Median Statistics**: Computes statistical measures across all frames to provide:
+#   - Median displacements (more robust than mean)
+#   - Temporal variations in the flow field
+#   - Gradient information for seeding quality assessment
+#
+# ### Output Data Structure
+#
+# The `piv_results` dictionary contains:
+# - `shape`: Dimensions of the velocity field grid
+# - `x`, `y`: Coordinate arrays for vector positions
+# - `u_median`, `v_median`: Median displacement components
+# - `u`, `v`: Full displacement time series
+# - `gradient`: Seeding quality metrics
+#
+# ### Important Notes
+#
+# 1. **Processing Time**: Full analysis may take several minutes depending on:
+#    - Number of frames
+#    - Size of ROI
+#    - Computer processing power
+#
+# 2. **Memory Usage**: Large datasets may require significant RAM
+#    - Monitor system resources during processing
+#    - Consider reducing ROI size if memory issues occur
+#
+# 3. **Vector Interpretation**:
+#    - Displacements are still in pixel units
+#    - Negative v-values are plotted inverted due to image coordinate system
+#    - Vectors show median pattern across all frames
+#
+# 4. **Data Storage**:
+#    - Results are saved in JSON format
+#    - Large datasets may create substantial files
+#    - Consider compression for long-term storage
+#
+# The saved results will be used in subsequent notebooks for:
+# - Conversion to real-world velocities
+# - Discharge calculations
+
 # %%
-# Run PIV Analisis
+# Run full PIV Analisis
 piv_results = run_analyze_all(
     frame_dir,
     mask=mask,
@@ -1364,8 +1584,84 @@ with open(piv_res_file, 'w') as f:
     json.dump(piv_results, f, indent=2)
 print(f"\nPIV results data saved to {piv_res_file}")
 
+# %%
+
 # %% [markdown]
 # # Step 6: Discharge Calculation
+#
+# This step calculates river discharge using PIV results and cross-section data. We'll convert pixel displacements to real-world velocities and combine them with bathymetry data to compute volumetric flow rates.
+#
+# ### Theory
+#
+# 1. **Discharge Calculation**:
+#    - Q = V × A (Velocity × Area)
+#    - Integration across cross-section
+#    - Depth-averaged velocity estimation
+#
+# 2. **Velocity Components**:
+#    - Conversion from pixel to real-world coordinates
+#    - Consideration of camera frame rate
+#    - Alpha coefficient for surface-to-depth velocity ratio
+#
+# 3. **Cross-section Elements**:
+#    - Bathymetry profile
+#    - Station spacing
+#    - Water level
+#
+#
+# ### Essential Parameters:
+# - `fps`: Video capture frequency from video exif(e.g., 30 fps)
+# - `step`: Number of frames between PIV pairs from frames extraction (affects time between velocity measurements)
+# - **Alpha Coefficient**: PREVIOUSLY DEFINED
+# - **Number of Stations**: PREVIOUSLY DEFINED
+# - **Interpolation**: Whether to fill data gaps using interpolation
+#
+# ### Optional Parameters:
+# - **Artificial Seeding**: Whether the tracer used was artificialy seeded
+# - **Multipass**: Use multiple PIV passes for improved accuracy
+# - **Standard Filter**: Apply standard deviation filtering to velocity measurements
+# - **Median Test Filter**: Remove outliers using median comparison
+#
+# ### Function: update_current_x_section
+#
+# This function performs three main tasks:
+# 1. Updates velocity profiles for the cross-section
+# 2. Calculates discharge using the configured parameters
+# 3. Returns statistical summaries including:
+#    - Total discharge (Q)
+#    - Average velocity
+#    - Cross-sectional area
+#    - Depth
+#
+# ## Visualization
+#
+# #### Left Panel: Spatial Visualization
+# - Frame from the video showing the cross-section location
+# - Color-coded endpoints (red: left bank, green: right bank)
+# - Velocity vectors scaled and colored by magnitude
+#
+# #### Right Panels: Quantitative Analysis
+#
+# 1. **Discharge Distribution** (Top)
+#    - Bar plot showing proportion of total discharge along the cross-section
+#    - Color-coded bars indicating contribution levels:
+#      - Red: High contribution (>10% of total)
+#      - Yellow: Medium contribution (5-10%)
+#      - Green: Low contribution (<5%)
+#
+# 2. **Velocity Profile** (Middle)
+#    - Green shaded area: ±1 standard deviation
+#    - Red shaded area: 5th to 95th percentile range
+#
+# 3. **Depth Profile** (Bottom)
+#    - Shows channel morphology along cross-section
+#
+# The visualization integrates spatial context with quantitative measurements, allowing for comprehensive interpretation of the flow characteristics at the cross-section.
+
+# %%
+# Define parameters (check from video metadata and frame extraction)
+fps = 30
+step = 1
 
 # %%
 gcp_cam = "chamb_02"
@@ -1400,9 +1696,6 @@ frame, frame_rgb, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time) #
 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 # %%
-fps = 30
-step = 1
-
 alpha = xsections['section1']['alpha']
 num_stations = xsections['section1']['num_stations']
 summary = update_current_x_section(xsections,
