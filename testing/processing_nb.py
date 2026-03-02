@@ -597,8 +597,8 @@ print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s)."
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "chamb_02"
-gcp_date = "20260223"         # in format YYYYMMDD
+gcp_cam = "ilh-cam1-pt"
+gcp_date = "20250426"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
@@ -862,6 +862,7 @@ def vis_transf(df_frames,gcp_cam,gcp_date,gcp_time,transformation):
         x2_rw, y2_rw = real_world_points[1]
         x3_rw, y3_rw = real_world_points[2]
         x4_rw, y4_rw = real_world_points[3]
+        print(real_world_points)
         
         # Draw lines with the same colors as in the first plot
         ax2.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#6CD4FF', linewidth=2) # Line 1-2
@@ -941,11 +942,17 @@ num_stations = 15
 alpha_vel = 1
 
 # %%
+#########################
+### DEFINE PARAMETERS ###
+#########################
+
 gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
-pt_data = "pt_test.csv"
+#########################
+
+pt_name = "pt_02"
 
 # %%
 # Load image
@@ -961,9 +968,28 @@ transf_file = rect_dir / gcp_cam / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.
 with open(transf_file, 'r') as f:
     transformation_matrix = np.array(json.load(f))
 
+# Load first FCP coordinates
+gcps_real_file = gcps_dir / gcp_cam / f"{gcp_cam}_gcps_real.csv"
+with open(gcps_real_file, newline="") as f:
+    reader = csv.reader(f)
+    first_row = next(reader)   # read only the first line
+off_x = float(first_row[0])
+off_y = float(first_row[1])
+
+
 # Load PT data
-pt_data_file = pts_dir / pt_data
+pt_data_file = pts_dir / (f"{pt_name}_depth.csv")
 df_pt = load_pt(pt_data_file)
+pt_real_coord_file = pts_dir / (f"{pt_name}_real.csv")
+pt_points_coords = []
+with open(pt_real_coord_file, newline="") as f:
+    reader = csv.reader(f)
+    for row in reader:
+        if not row:
+            continue
+        x = float(row[0])
+        y = float(row[1])
+        pt_points_coords.append((x, y))
 
 # Load video metadata
 meta_file = video_dir / gcp_cam / f"_{gcp_cam}_meta.csv"
@@ -971,6 +997,8 @@ df_meta = pd.read_csv(meta_file)
 
 # %%
 # Subset pt data based on video date, time and duration
+
+#
 
 # Filter the row matching date + time
 row = df_meta[
@@ -1014,6 +1042,21 @@ ax.grid(True, which='both', color='black', linewidth=0.5, alpha=0.2)
 
 extent = transformation['extent']
 ax.imshow(transformation['transformed_img'], extent=extent)
+
+#########################################################################################
+## Plot PT loc
+
+# Transform PT loc to orthrectified local space
+x1_pt_co, y1_pt_co = pt_points_coords[0]
+x1_pt_rw = x1_pt_co - off_x
+y1_pt_rw = y1_pt_co - off_y
+
+
+## Plot points
+# Point 1 in red
+ax.plot(x1_pt_rw, y1_pt_rw, 'o', color='#ED6B57', markersize=5)
+ax.text(x1_pt_rw, y1_pt_rw, "PT", color='#ED6B57', fontsize=8, ha='left', va='bottom')
+###########################################################################################
 
 # Add scale bar
 # Calculate appropriate scale length
@@ -1152,14 +1195,17 @@ y_ri = points_cross[1][1]
 print(f"Selected cross-section coordinates (X/Y):\n{points_cross}")
 
 # %%
+### HERE: Fix bathymetry estimation (not anymore mid_point based)
+
+# %%
 # Define bathymetry
 bath_file = bathy_dir / gcp_cam / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
 
-lvl = 0.2
+lvl = depth_avg
 
 le_bath = x_le - x_le
 ri_bath = x_ri - x_le
-mid_bath = ri_bath/2
+mid_bath = x1_pt_rw
 
 xL = le_bath
 xM = mid_bath
@@ -1195,11 +1241,11 @@ xsections = {
     }
 }
 
-# Calculate pixel coordinates from real-world coordinates
+# Calculate XS pixel coordinates from real-world coordinates
 left_pixel = transform_real_world_to_pixel(xsections["section1"]["east_l"], 
                                          xsections["section1"]["north_l"], 
                                          transformation_matrix)
-print("Real world coordinates of cross section points")
+print("Image coordinates of cross section points")
 print(f"Left river bank: {left_pixel}")
 right_pixel = transform_real_world_to_pixel(xsections["section1"]["east_r"], 
                                           xsections["section1"]["north_r"], 
@@ -1227,6 +1273,16 @@ with open(sect_file, 'w') as f:
 print(f"\nCross-sections data saved to {sect_file}")
 
 # %%
+# Calculate PT pixel coordinates from real-world coordinates
+pt_pix = transform_real_world_to_pixel(x1_pt_rw, y1_pt_rw, transformation_matrix)
+
+x1_pt_pix = pt_pix[0]
+y1_pt_pix = pt_pix[1]
+
+print(x1_pt_pix)
+print(y1_pt_pix)
+
+# %%
 # %matplotlib inline
 
 # Load and plot bathymetry data
@@ -1249,10 +1305,11 @@ ax1.imshow(frame_rgb)
 ax1.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]], 
          [xsections["section1"]["yl"], xsections["section1"]["yr"]], 
          color='#F5BF61', linewidth=2)  # Line connecting points
-ax1.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=3)  # Left point
-ax1.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=3)  # Right point
+ax1.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=3)  # XS Left point
+ax1.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=3)  # XS Right point
+ax1.plot(x1_pt_pix, y1_pt_pix, 'o', color='#62C655', markersize=3)  # PT
 
-ax1.set_title('Cross-Section Location')
+ax1.set_title('Cross-Section and PT Location')
 ax1.axis('off')
 
 # Second subplot: Bathymetry profile
