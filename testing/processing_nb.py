@@ -18,11 +18,11 @@
 #
 # RIVeR (Rectification of Image Velocimetry Results) is a Python package designed for processing river flow videos to obtain velocity fields and discharge estimates. It supports three main filming scenarios:
 #
-# ## RIVeR-ICE: Rectification of Image Velocimetry Results - Integrated Channel Evolution
+# **RIVeR-ICE: Rectification of Image Velocimetry Results - Integrated Channel Evolution**
 #
 # RIVeR-ICE (Rectification of Image Velocimetry Results - Integrated Channel Evolution) is an extension of RIVeR that....
 #
-# ## Prerequisites
+# **Prerequisites**
 #
 # Before starting, ensure you have:
 #
@@ -30,11 +30,11 @@
 # - RIVeR package installed
 # - Required dependencies (numpy, opencv-python, scipy)
 #
-# ## Required folder hierarchy
+# **Required folder hierarchy**
 #
 # ...
 #
-# ## Required file terminology
+# **Required file terminology**
 #
 # ...
 
@@ -269,24 +269,24 @@ print(format_dict_as_lines(err_csvs))
 # %% [markdown]
 # # Step 2: Frame Extraction
 #
-# ## Why Extract Frames?
+# **Why Extract Frames?**
 # - PIV analysis requires sequential image pairs
 # - Easier memory management than processing full videos
 # - Allows for quality control and frame selection
 # - Enables parallel processing in later steps
 #
-# ## Prerequisites
+# **Prerequisites**
 # - RIVeR package installed
 # - Video file(s) of river flow
 # - Sufficient storage space for frames (tip: estimate ~0.5-2MB per frame)
 #
-# ## Parameters
+# **Parameters**
 # - `every`: Extract every nth frame (e.g., every=2 takes every second frame)
 # - `start_frame_number`: Begin extraction from this frame
 # - `end_frame_number`: Stop extraction at this frame
 # - `overwrite_frames`: Option for overwriting existing data in frames folder
 # - 
-# ## Filters
+# **Filters**
 # - `camera_filter`: Extract only for this camera
 # - `start_date`: Begin extraction from this date
 # - `end_date`: Stop extraction at this date
@@ -563,13 +563,13 @@ print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s)."
 #
 # Performs coordinate transformation for oblique (side-view) river videos using RIVeR that accounts for perspective distortion.
 #
-# ## Prerequisites
+# **Prerequisites**
 #
 # - Completed frame extraction
 # - An oblique view frame to work with
 # - 4 GCPs (ground control points) with known real-world coordinates 
 #
-# ## Analysis requirements
+# **Analysis requirements**
 #
 # - GCP well distributed across the frame
 # - Include points at different depths in the scene
@@ -587,7 +587,7 @@ print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s)."
 #   * Point 4: Downstream-left
 
 # %% [markdown]
-# ### Repeat lines until "End of Step 3" for each station
+# ***Repeat lines until "End of Step 3" for each station***
 
 # %%
 # Adapt so you loop through it and do it once a day for each station
@@ -597,8 +597,8 @@ print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s)."
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "ilh-cam1-pt"
-gcp_date = "20250426"         # in format YYYYMMDD
+gcp_cam = "chamb_02"
+gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
@@ -678,6 +678,7 @@ fig, ax = plt.subplots(figsize=(10,8))
 ax.imshow(img)
 ax.set_title(f"Select GCPs:\n1) left upstream\n2) right upstream\n3) right downstreamm\n4) left downstream\n\n{frame_path}")
 plt.axis("off")
+
 
 # Function to get image coordinates
 def onclick(event):
@@ -909,10 +910,7 @@ with open(transf_file, 'w') as f:
 print(f"Transformation matrix saved to\n{transf_file}")
 
 # %% [markdown]
-# ### End of Step 3 (repeat for each station)
-
-# %%
-raise SystemExit
+# ***End of Step 3 (repeat for each station)***
 
 # %% [markdown]
 # # Step 4: Cross-Section Selection and Bathymetry
@@ -923,13 +921,13 @@ raise SystemExit
 # - Calculate section properties like area and width
 # - Prepare cross-sections for velocity analysis
 #
-# ## Prerequisites
+# **Prerequisites**
 #
 # - Completed orthrectification
 # - Transformation matrix from previous steps
 # - Water depth
 #
-# ## Parameters
+# **Parameters**
 #
 # - `num_stations`: Defines number of steps (resolution) in the cross-section for bahymetry calculation and PIV vectors
 # - `alpha_vel`: Ratio between surface and depth-averaged velocity (typically 0.85-1.0)
@@ -1052,10 +1050,9 @@ x1_pt_rw = x1_pt_co - off_x
 y1_pt_rw = y1_pt_co - off_y
 
 
-## Plot points
-# Point 1 in red
-ax.plot(x1_pt_rw, y1_pt_rw, 'o', color='#ED6B57', markersize=5)
-ax.text(x1_pt_rw, y1_pt_rw, "PT", color='#ED6B57', fontsize=8, ha='left', va='bottom')
+## Plot PT points
+ax.plot(x1_pt_rw, y1_pt_rw, 'o', color='blue', markersize=5)
+ax.text(x1_pt_rw, y1_pt_rw, "PT", color='blue', fontsize=8, ha='left', va='bottom')
 ###########################################################################################
 
 # Add scale bar
@@ -1157,7 +1154,7 @@ plt.show()
 raise SystemExit
 
 # %%
-point_coords_xs
+print(point_coords_xs)
 
 # %%
 if not point_coords_xs:
@@ -1198,6 +1195,7 @@ print(f"Selected cross-section coordinates (X/Y):\n{points_cross}")
 ### HERE: Fix bathymetry estimation (not anymore mid_point based)
 
 # %%
+## Midpoint bathymetry version
 # Define bathymetry
 bath_file = bathy_dir / gcp_cam / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
 
@@ -1205,7 +1203,7 @@ lvl = depth_avg
 
 le_bath = x_le - x_le
 ri_bath = x_ri - x_le
-mid_bath = x1_pt_rw
+mid_bath = (ri_bath - le_bath) / 2
 
 xL = le_bath
 xM = mid_bath
@@ -1219,11 +1217,107 @@ xs = np.linspace(xL, xR, num_stations)
 points = [(float(x), float(p(x))) for x in xs]
 
 
+
 # Write CSV
 with open(bath_file, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["d", "h"])   # header
     writer.writerows(points)      # the data rows
+
+# %%
+## Sensor-dyanmic greatest depth bathymetry version
+# Define bathymetry
+bath_file = bathy_dir / gcp_cam / (f"{gcp_cam}_bath_{gcp_date}_{gcp_time}.csv")
+lvl = depth_avg
+#x1_pt_rw = 2.5    # for testing
+
+# Horizontal coordinates (left=0)
+xL = x_le - x_le            # 0
+xR = x_ri - x_le
+xS = x1_pt_rw               # sensor horizontal position (same coordinate system)
+
+# Elevation levels:
+# 'lvl' is the elevation at the banks (top of bed profile in your convention).
+# The deepest point is 0 by requirement.
+# Sensor elevation:
+hS = lvl - depth_avg        # must be in [0, lvl]
+
+# Guard against tiny numeric issues
+eps = 1e-9
+hS = max(0.0, min(float(hS), float(lvl)))
+
+# Ratio r = sqrt(hS/lvl). r in [0,1]. r=0 -> sensor at the deepest point; r=1 -> sensor at bank level.
+r = 0.0 if lvl <= eps else float(np.sqrt(hS / max(lvl, eps)))
+
+def choose_x0(xL, xR, xS, r):
+    """
+    Compute candidate vertex locations x0 that ensure:
+      - h(x0) = 0 (minimum)
+      - h(xL) = h(xR) = lvl
+      - h(xS) = hS
+    Try both 'sensor on left branch' and 'sensor on right branch' formulas.
+    Prefer a valid x0 within (xL, xR). Fall back to midpoint if needed.
+    """
+    # Handle edge cases explicitly
+    if r < 1e-9:
+        # Sensor is at the deepest level -> vertex at the sensor
+        return float(xS)
+
+    if 1.0 - r < 1e-9:
+        # Sensor elevation equals bank elevation (depth_avg ≈ 0): degenerate.
+        # Use midpoint vertex as a reasonable default.
+        return float(0.5 * (xL + xR))
+
+    # Candidate assuming sensor is on LEFT branch (xS <= x0)
+    x0_left = (xS - r * xL) / (1.0 - r)
+    # Candidate assuming sensor is on RIGHT branch (xS >= x0)
+    x0_right = (xS - r * xR) / (1.0 - r)
+
+    valid_left = (xL < x0_left < xR) and (xS <= x0_left + 1e-12)
+    valid_right = (xL < x0_right < xR) and (xS >= x0_right - 1e-12)
+
+    if valid_left and not valid_right:
+        return float(x0_left)
+    if valid_right and not valid_left:
+        return float(x0_right)
+    if valid_left and valid_right:
+        # If both are valid, choose the one that positions x0 closer to xS (milder asymmetry)
+        return float(x0_left) if abs(x0_left - xS) <= abs(x0_right - xS) else float(x0_right)
+
+    # If neither candidate is valid (very rare due to rounding), fall back to midpoint
+    return float(0.5 * (xL + xR))
+
+# Compute the vertex (deepest point)
+x0 = choose_x0(xL, xR, xS, r)
+
+# Define piecewise parabola guaranteeing min=0 and banks=lvl
+def p(x):
+    x = np.asarray(x, dtype=float)
+    out = np.empty_like(x)
+
+    # Coefficients from bank constraints
+    aL = lvl / ((xL - x0) ** 2)
+    aR = lvl / ((xR - x0) ** 2)
+
+    # Left branch (x <= x0): h = aL (x - x0)^2
+    left_mask = (x <= x0)
+    out[left_mask] = aL * (x[left_mask] - x0) ** 2
+
+    # Right branch (x >= x0): h = aR (x - x0)^2
+    right_mask = ~left_mask
+    out[right_mask] = aR * (x[right_mask] - x0) ** 2
+
+    # Numerical clipping to guarantee never below 0, never above lvl by > tiny epsilon
+    return np.clip(out, 0.0, lvl)
+
+# Sample and write CSV
+xs = np.linspace(xL, xR, num_stations)
+points = [(float(x), float(p(x))) for x in xs]
+
+with open(bath_file, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["d", "h"])   # header
+    writer.writerows(points)
 
 # %%
 # Define initial cross-sections dictionary
@@ -1307,7 +1401,8 @@ ax1.plot([xsections["section1"]["xl"], xsections["section1"]["xr"]],
          color='#F5BF61', linewidth=2)  # Line connecting points
 ax1.plot(xsections["section1"]["xl"], xsections["section1"]["yl"], 'o', color='#ED6B57', markersize=3)  # XS Left point
 ax1.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 'o', color='#62C655', markersize=3)  # XS Right point
-ax1.plot(x1_pt_pix, y1_pt_pix, 'o', color='#62C655', markersize=3)  # PT
+ax1.plot(x1_pt_pix, y1_pt_pix, 'o', color='blue', markersize=3)  # PT
+ax1.text(x1_pt_pix, y1_pt_pix, "PT", color='blue', fontsize=8, ha='left', va='bottom')
 
 ax1.set_title('Cross-Section and PT Location')
 ax1.axis('off')
@@ -1318,6 +1413,16 @@ ax2.axhline(y=xsections["section1"]["level"], color='#6CD4FF', linestyle='--', l
 ax2.fill_between(stations, stages, xsections["section1"]["level"], 
                 where=(stages <= xsections["section1"]["level"]), 
                 alpha=0.3, color='#6CD4FF', label='Wet area')
+
+
+# ---- ADD PRESSURE TRANSDUCER POINT ----
+pt_x = x1_pt_rw                         # horizontal coordinate
+pt_y = xsections["section1"]["level"] - depth_avg   # elevation from depth
+
+ax2.plot(pt_x, pt_y, 'o', color='blue', markersize=6, label='PT')
+ax2.text(pt_x, pt_y, "PT", color='blue', fontsize=9, ha='left', va='bottom')
+# ----------------------------------------
+
 ax2.grid(True)
 ax2.set_xlabel('Distance from left bank (m)')
 ax2.set_ylabel('Elevation (m)')
@@ -1342,13 +1447,13 @@ plt.savefig(bath_img)
 # - Creates masks for analysis regions from selected cross-section
 # - Runs PIV analysis
 #
-# ## Prerequisites
+# **Prerequisites**
 #
 # - Completed cross-section definition
 # - Extracted video frames ready for analysis
 # - Transformation matrix and cross-section data saved
 #
-# ## Parameters
+# **Parameters**
 # - `interrogation_area_1`: First pass window size should be larger to capture larger displacements
 # - `interrogation_area_2`: Second pass window size should be smaller for better spatial resolution
 # - `overlap`: Window overlap determines the density of velocity vectors
@@ -1410,12 +1515,12 @@ print(f"Number of stations: {piv_params['num_stations']}")
 #
 # Create a mask and bounding box to optimize PIV analysis performance and focus on relevant areas:
 #
-# - **ROI (Region of Interest) Bounding Box**: 
+# **ROI (Region of Interest) Bounding Box**: 
 #   - Defines a rectangular region that encompasses all cross-sections
 #   - Significantly reduces computation time by limiting PIV analysis to only this region
 #   - All areas outside this box are excluded from processing entirely
 #
-# - **Analysis Mask**:
+# **Analysis Mask**:
 #   - Further refines the analysis area within the ROI
 #   - White areas (mask value = 1) indicate regions where PIV calculations will be retained
 #   - Black areas (mask value = 0) indicate regions where PIV results will be filtered out
@@ -1596,7 +1701,7 @@ plt.show()
 # 3. Visualizes the results
 # 4. Saves the analysis output for later use
 #
-# ### Key Elements of Full Analysis
+# **Key Elements of Full Analysis**
 #
 # - **Multiple Frame Processing**: Unlike our test which used just two frames, this analyzes all sequential frame pairs
 # - **Median Statistics**: Computes statistical measures across all frames to provide:
@@ -1604,7 +1709,7 @@ plt.show()
 #   - Temporal variations in the flow field
 #   - Gradient information for seeding quality assessment
 #
-# ### Output Data Structure
+# **Output Data Structure**
 #
 # The `piv_results` dictionary contains:
 # - `shape`: Dimensions of the velocity field grid
@@ -1613,7 +1718,7 @@ plt.show()
 # - `u`, `v`: Full displacement time series
 # - `gradient`: Seeding quality metrics
 #
-# ### Important Notes
+# **Important Notes**
 #
 # 1. **Processing Time**: Full analysis may take several minutes depending on:
 #    - Number of frames
@@ -1683,14 +1788,12 @@ with open(piv_res_file, 'w') as f:
     json.dump(piv_results, f, indent=2)
 print(f"\nPIV results data saved to {piv_res_file}")
 
-# %%
-
 # %% [markdown]
 # # Step 6: Discharge Calculation
 #
 # This step calculates river discharge using PIV results and cross-section data. We'll convert pixel displacements to real-world velocities and combine them with bathymetry data to compute volumetric flow rates.
 #
-# ### Theory
+# **Theory**
 #
 # 1. **Discharge Calculation**:
 #    - Q = V × A (Velocity × Area)
@@ -1708,20 +1811,20 @@ print(f"\nPIV results data saved to {piv_res_file}")
 #    - Water level
 #
 #
-# ### Essential Parameters:
+# **Essential Parameters:**
 # - `fps`: Video capture frequency from video exif(e.g., 30 fps)
 # - `step`: Number of frames between PIV pairs from frames extraction (affects time between velocity measurements)
 # - **Alpha Coefficient**: PREVIOUSLY DEFINED
 # - **Number of Stations**: PREVIOUSLY DEFINED
 # - **Interpolation**: Whether to fill data gaps using interpolation
 #
-# ### Optional Parameters:
+# **Optional Parameters:**
 # - **Artificial Seeding**: Whether the tracer used was artificialy seeded
 # - **Multipass**: Use multiple PIV passes for improved accuracy
 # - **Standard Filter**: Apply standard deviation filtering to velocity measurements
 # - **Median Test Filter**: Remove outliers using median comparison
 #
-# ### Function: update_current_x_section
+# **Function: update_current_x_section**
 #
 # This function performs three main tasks:
 # 1. Updates velocity profiles for the cross-section
@@ -1732,14 +1835,16 @@ print(f"\nPIV results data saved to {piv_res_file}")
 #    - Cross-sectional area
 #    - Depth
 #
-# ## Visualization
+# -----------------------------------------------------------
+# **Visualization**
+# -----------------------------------------------------------
 #
-# #### Left Panel: Spatial Visualization
+# **Left Panel: Spatial Visualization**
 # - Frame from the video showing the cross-section location
 # - Color-coded endpoints (red: left bank, green: right bank)
 # - Velocity vectors scaled and colored by magnitude
 #
-# #### Right Panels: Quantitative Analysis
+# **Right Panels: Quantitative Analysis**
 #
 # 1. **Discharge Distribution** (Top)
 #    - Bar plot showing proportion of total discharge along the cross-section
@@ -1859,6 +1964,10 @@ ax0.plot(xsections["section1"]["xl"], xsections["section1"]["yl"],
 ax0.plot(xsections["section1"]["xr"], xsections["section1"]["yr"], 
          'o', color='#62C655', markersize=10, label='Right bank')
 
+# Plot PT point
+ax0.plot(x1_pt_pix, y1_pt_pix, 'o', color='blue', markersize=5)  # PT
+ax0.text(x1_pt_pix, y1_pt_pix, "PT", color='blue', fontsize=8, ha='left', va='bottom')
+
 # Calculate and plot velocity arrows
 width_arrow = 0.8 * np.mean(np.diff(summary['section1']['distance']))
 arrows, magnitude_range = calculate_multiple_arrows(
@@ -1934,6 +2043,14 @@ ax1.set_title('Discharge Distribution')
 ax1.set_ylabel('Proportion of Total Discharge')
 ax1.grid(True, alpha=0.3)
 
+# ---- ADD PRESSURE TRANSDUCER POINT ----
+pt_x_1 = x1_pt_rw                         # horizontal coordinate
+pt_y_1 = 0
+
+ax1.plot(pt_x_1, pt_y_1, 'o', color='blue', markersize=6, label='PT')
+ax1.text(pt_x_1, pt_y_1, "PT", color='blue', fontsize=9, ha='left', va='bottom')
+# ----------------------------------------
+
 # Add legend for discharge colors
 legend_elements = [
     Patch(facecolor='#ED6B57', alpha=0.9, label='> 0.1'),
@@ -1960,6 +2077,15 @@ ax2.plot(summary['section1']['distance'],
 ax2.plot(summary['section1']['distance'], 
          summary['section1']['filled_streamwise_velocity_magnitude'],
          'ko', markersize=6)  # black points
+
+# ---- ADD PRESSURE TRANSDUCER POINT ----
+pt_x_2 = x1_pt_rw                         # horizontal coordinate
+pt_y_2 = 0
+
+ax2.plot(pt_x_2, pt_y_2, 'o', color='blue', markersize=6, label='PT')
+ax2.text(pt_x_2, pt_y_2, "PT", color='blue', fontsize=9, ha='left', va='bottom')
+# ----------------------------------------
+
 ax2.set_title('Velocity Profile')
 ax2.set_ylabel('Velocity (m/s)')
 ax2.grid(True, alpha=0.3)
@@ -1973,6 +2099,15 @@ ax3.plot(summary['section1']['distance'],
 ax3.fill_between(summary['section1']['distance'],
                  summary['section1']['depth'],
                  color='#6CD4FF', alpha=0.5)  # light blue fill
+
+# ---- ADD PRESSURE TRANSDUCER POINT ----
+pt_x_3 = x1_pt_rw                         # horizontal coordinate
+pt_y_3 = lvl
+
+ax3.plot(pt_x_3, pt_y_3, 'o', color='blue', markersize=6, label='PT')
+ax3.text(pt_x_3, pt_y_3, "PT", color='blue', fontsize=9, ha='left', va='bottom')
+# ----------------------------------------
+
 ax3.set_title('Depth Profile')
 ax3.set_xlabel('Distance from Left Bank (m)')
 ax3.set_ylabel('Depth (m)')
@@ -2081,10 +2216,9 @@ df_sum
 
 # %%
 # to do:
-# 1) Insert real world coordinates of PT and display in images and consider in bathymetry calculation
 # 2) Make Step 3 (orthrectification) dynamic
 # 3) Make Step 4 (cross section selection) dynamic
-# 4) Make Steo 5 (water depth and baythymetry) dynamic
+# 4) Make Steo 5 (water depth and bathymetry) dynamic
 
 # %%
 
