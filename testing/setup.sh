@@ -17,13 +17,14 @@ export PTS_DIR="$DATA_DIR/pts"
 export RESULTS_DIR="$PROJECT_DIR/results"
 export PIV_DIR="$RESULTS_DIR/piv"
 export DISCH_DIR="$RESULTS_DIR/discharge"
+export DEP_DIR="$RESULTS_DIR/depth"
 
 case ":$PYTHONPATH:" in
   *":$PROJECT_DIR:"*) ;;
   *) export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" ;;
 esac
 
-mkdir -p "$DATA_DIR" "$VIDEO_DIR" "$FRAMES_DIR" "$GCPS_DIR" "$BATH_DIR" "$RECT_DIR" "$PTS_DIR" "$RESULTS_DIR" "$PIV_DIR" "$DISCH_DIR"
+mkdir -p "$DATA_DIR" "$VIDEO_DIR" "$FRAMES_DIR" "$GCPS_DIR" "$BATH_DIR" "$RECT_DIR" "$PTS_DIR" "$RESULTS_DIR" "$PIV_DIR" "$DISCH_DIR" "$DEP_DIR"
 
 echo "PROJECT_DIR = $PROJECT_DIR"
 echo "DATA_DIR = $DATA_DIR"

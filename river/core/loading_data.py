@@ -4,6 +4,8 @@ import csv
 import cv2
 from river.config import gcps_dir
 from river.config import bathy_dir
+from river.config import pts_dir
+from river.config import dep_dir
 
 # Function that loads the frame image
 def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
@@ -110,8 +112,11 @@ def load_xs_img(gcp_cam,gcp_date,gcp_time):
 
     return points_cross
 
-# Function that loads PT data
-def load_pt(pt_data_file):
+
+# Function that loads PT depth data
+def load_pt(pt_name):
+
+    pt_data_file = pts_dir / (f"{pt_name}_depth.csv")
     
     # Load CSV from string
     df = pd.read_csv(pt_data_file)
@@ -128,3 +133,66 @@ def load_pt(pt_data_file):
     df = df[["date_yyyymmdd", "time_hhmmss", "depth_m"]]
     
     return df
+
+
+# Function that loads PT img coord data
+def load_pt_img(pt_name):
+    pt_img_path = pts_dir / (f"{pt_name}_img.csv")
+
+    points_pt = []
+    with open(pt_img_path, newline="") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            x = float(row[0])
+            y = float(row[1])
+            points_pt.append((x, y))
+
+    return points_pt
+
+
+# Function that loads PT real world coord data
+def load_pt_real(pt_name):
+    pt_real_path = pts_dir / (f"{pt_name}_real.csv")
+
+    points_pt = []
+    with open(pt_real_path, newline="") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            x = float(row[0])
+            y = float(row[1])
+            points_pt.append((x, y))
+
+    return points_pt
+
+
+# Function that loads PT loc data
+def load_pt_loc(pt_name):
+    pt_loc_path = pts_dir / (f"{pt_name}_loc.csv")
+
+    points_pt = []
+    with open(pt_loc_path, newline="") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            x = float(row[0])
+            y = float(row[1])
+            points_pt.append((x, y))
+
+    return points_pt
+
+
+# Function that loads PT depth data
+def load_pt_dep(pt_name,gcp_date,gcp_time):
+
+    pt_dep_file = dep_dir / pt_name / f"{pt_name}_dep_{gcp_date}_{gcp_time}.csv"
+        
+    with open(pt_dep_file, "r") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    
+    return float(rows[0][0])

@@ -975,19 +975,11 @@ off_x = float(first_row[0])
 off_y = float(first_row[1])
 
 
-# Load PT data
-pt_data_file = pts_dir / (f"{pt_name}_depth.csv")
-df_pt = load_pt(pt_data_file)
-pt_real_coord_file = pts_dir / (f"{pt_name}_real.csv")
-pt_points_coords = []
-with open(pt_real_coord_file, newline="") as f:
-    reader = csv.reader(f)
-    for row in reader:
-        if not row:
-            continue
-        x = float(row[0])
-        y = float(row[1])
-        pt_points_coords.append((x, y))
+# Load PT depth data
+df_pt = load_pt(pt_name)
+
+# Load PT real world coord data
+pt_points_coords = load_pt_real(pt_name)
 
 # Load video metadata
 meta_file = video_dir / gcp_cam / f"_{gcp_cam}_meta.csv"
@@ -995,8 +987,6 @@ df_meta = pd.read_csv(meta_file)
 
 # %%
 # Subset pt data based on video date, time and duration
-
-#
 
 # Filter the row matching date + time
 row = df_meta[
@@ -1026,6 +1016,14 @@ df_window = df_pt.loc[mask]
 # Compute mean depth for that video clip
 depth_avg = df_window["depth_m"].mean()
 print("Average depth over video period:", round(depth_avg,2), "m")
+
+# Save depth results
+dep_res_csv = dep_dir / pt_name / f"{pt_name}_dep_{gcp_date}_{gcp_time}.csv"
+dep_res_csv.parent.mkdir(parents=True, exist_ok=True)
+with open(dep_res_csv, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([depth_avg])     # value
+print("Saved average depth to: ", dep_res_csv)
 
 # %%
 # Select cross section in image
@@ -1373,8 +1371,22 @@ pt_pix = transform_real_world_to_pixel(x1_pt_rw, y1_pt_rw, transformation_matrix
 x1_pt_pix = pt_pix[0]
 y1_pt_pix = pt_pix[1]
 
-print(x1_pt_pix)
-print(y1_pt_pix)
+print(x1_pt_rw,y1_pt_rw)
+print(pt_pix)
+
+# Save PT img coord to csv
+pt_img_coord = pts_dir / (f"{pt_name}_img.csv")
+with open(pt_img_coord, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([x1_pt_pix,y1_pt_pix])
+print(f"\nPT image coordinates saved to:\n{pt_img_coord}")
+
+# Save PT loc coord to csv
+pt_loc_coord = pts_dir / (f"{pt_name}_loc.csv")
+with open(pt_loc_coord, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([x1_pt_rw,y1_pt_rw])
+print(f"\nPT local coordinates saved to:\n{pt_loc_coord}")
 
 # %%
 # %matplotlib inline
@@ -1872,6 +1884,10 @@ gcp_cam = "chamb_02"
 gcp_date = "20260223"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
+########################
+
+pt_name = "pt_02"
+
 # %%
 ## Define paths
 
@@ -1898,6 +1914,17 @@ with open(piv_results_file, 'r') as f:
 df_frames = pd.read_parquet(frames_dir/"_frame_paths.parquet")
 frame, frame_rgb, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time) # loads by default 0th frame
 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+# Load PT img coord
+pt_pix = load_pt_img(pt_name)
+(x1_pt_pix, y1_pt_pix) = pt_pix[0]
+
+# Load PT loc coord
+pt_loc = load_pt_loc(pt_name)
+(x1_pt_rw, y1_pt_rw) = pt_loc[0]
+
+# Load PT depth
+lvl = load_pt_dep(pt_name,gcp_date,gcp_time)
 
 # %%
 alpha = xsections['section1']['alpha']
@@ -1965,8 +1992,7 @@ ax0.plot(xsections["section1"]["xr"], xsections["section1"]["yr"],
          'o', color='#62C655', markersize=10, label='Right bank')
 
 # Plot PT point
-ax0.plot(x1_pt_pix, y1_pt_pix, 'o', color='blue', markersize=5)  # PT
-ax0.text(x1_pt_pix, y1_pt_pix, "PT", color='blue', fontsize=8, ha='left', va='bottom')
+ax0.plot(x1_pt_pix, y1_pt_pix, 'o', color='blue', markersize=5, label='PT')  # PT
 
 # Calculate and plot velocity arrows
 width_arrow = 0.8 * np.mean(np.diff(summary['section1']['distance']))
@@ -2043,13 +2069,10 @@ ax1.set_title('Discharge Distribution')
 ax1.set_ylabel('Proportion of Total Discharge')
 ax1.grid(True, alpha=0.3)
 
-# ---- ADD PRESSURE TRANSDUCER POINT ----
-pt_x_1 = x1_pt_rw                         # horizontal coordinate
+# Plot vertical PT line
+pt_x_1 = x1_pt_rw
 pt_y_1 = 0
-
-ax1.plot(pt_x_1, pt_y_1, 'o', color='blue', markersize=6, label='PT')
-ax1.text(pt_x_1, pt_y_1, "PT", color='blue', fontsize=9, ha='left', va='bottom')
-# ----------------------------------------
+ax1.axvline(x=pt_x_1, color='blue', linestyle='--', linewidth=1, label='PT')
 
 # Add legend for discharge colors
 legend_elements = [
@@ -2078,13 +2101,11 @@ ax2.plot(summary['section1']['distance'],
          summary['section1']['filled_streamwise_velocity_magnitude'],
          'ko', markersize=6)  # black points
 
-# ---- ADD PRESSURE TRANSDUCER POINT ----
-pt_x_2 = x1_pt_rw                         # horizontal coordinate
+# Plot vertical PT line
+pt_x_2 = x1_pt_rw
 pt_y_2 = 0
+ax2.axvline(x=pt_x_2, color='blue', linestyle='--', linewidth=1, label='PT')
 
-ax2.plot(pt_x_2, pt_y_2, 'o', color='blue', markersize=6, label='PT')
-ax2.text(pt_x_2, pt_y_2, "PT", color='blue', fontsize=9, ha='left', va='bottom')
-# ----------------------------------------
 
 ax2.set_title('Velocity Profile')
 ax2.set_ylabel('Velocity (m/s)')
@@ -2100,13 +2121,11 @@ ax3.fill_between(summary['section1']['distance'],
                  summary['section1']['depth'],
                  color='#6CD4FF', alpha=0.5)  # light blue fill
 
-# ---- ADD PRESSURE TRANSDUCER POINT ----
-pt_x_3 = x1_pt_rw                         # horizontal coordinate
+# Plot vertical PT line
+pt_x_3 = x1_pt_rw
 pt_y_3 = lvl
+ax3.axvline(x=pt_x_3, color='blue', linestyle='--', linewidth=1, label='PT')
 
-ax3.plot(pt_x_3, pt_y_3, 'o', color='blue', markersize=6, label='PT')
-ax3.text(pt_x_3, pt_y_3, "PT", color='blue', fontsize=9, ha='left', va='bottom')
-# ----------------------------------------
 
 ax3.set_title('Depth Profile')
 ax3.set_xlabel('Distance from Left Bank (m)')
