@@ -39,7 +39,7 @@ DEFAULT_EXTS = (".mp4", ".avi", ".mkv", ".mov")
 
 # Regex for "<camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>"
 STEM_RE = re.compile(
-    r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})$',
+    r'^(?P<camera>[^_]+)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})$',
     re.IGNORECASE
 )
 
@@ -148,10 +148,13 @@ def discover_videos(
 
         total_video_files += 1
 
-        m = STEM_RE.match(path.stem)
+        session_dir = path.parent           # 20250723-000000-235900
+        camera_dir = path.parent.parent     # ilhh
+        
+        m = STEM_RE.match(path.stem)        # ✅ match FILENAME
         if not m:
             continue
-
+        
         camera = m.group("camera")
         date = m.group("date")
         start = m.group("start")
@@ -159,6 +162,9 @@ def discover_videos(
 
         items.append((path, camera, date, start, end))
         cameras.add(camera)
+
+        if camera != camera_dir.name:
+            continue  # or log a warning
 
     return items, total_video_files, cameras
 

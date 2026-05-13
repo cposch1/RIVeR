@@ -184,6 +184,17 @@ def transform_json_path(cam: str, date: str, time_: str) -> Path:
 
 
 # ---------------------------
+# Orthorectification display helpers
+# ---------------------------
+
+def global_extent_path(cam: str) -> Path:
+    """
+    Path where the per-camera global orthorectification extent is stored.
+    """
+    return rect_dir / cam / f"{cam}_global_extent.json"
+
+
+# ---------------------------
 # GUI App
 # ---------------------------
 
@@ -193,7 +204,9 @@ class OrthoApp:
         self.df_frames = df_frames.copy()
         self.frames_root = frames_root
 
-        self.master.title("RIVeR Orthorectification")
+        self.global_extent: Optional[Tuple[float, float, float, float]] = None
+
+        self.master.title("RIVeR-ICE Orthorectification")
         self.master.geometry("1280x820")
 
         # State
@@ -382,6 +395,15 @@ class OrthoApp:
             self.selected_camera = None
             return
         self.selected_camera = self.lb_camera.get(sel[0])
+        # Load persisted global extent for this camera (if any)
+        self.global_extent = None
+        p = global_extent_path(self.selected_camera)
+        if p.exists():
+            try:
+                with p.open("r") as f:
+                    self.global_extent = tuple(json.load(f))
+            except Exception:
+                self.global_extent = None
         self._populate_dates()
         self._clear_points_state(due_to_selection_change=True)
 
@@ -600,20 +622,42 @@ class OrthoApp:
         [ax1.text(x, y, str(i), color='#6CD4FF', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
 
         # Orthorectified image with overlay
+        
         if 'transformed_img' in transformation and 'extent' in transformation:
-            extent = transformation['extent']
-            ax2.imshow(transformation['transformed_img'], extent=extent)
 
-            # Scale bar
-            map_width = extent[1] - extent[0]
+            # ----- capture global extent on first run -----
+            if self.global_extent is None:
+                self.global_extent = tuple(transformation['extent'])
+                p = global_extent_path(cam)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with p.open("w") as f:
+                    json.dump(self.global_extent, f, indent=2)
+        
+            # ----- define display extent (ALWAYS defined) -----
+            display_extent = self.global_extent
+        
+            # ----- draw raster in its TRUE world position -----
+            ax2.imshow(
+                transformation['transformed_img'],
+                extent=transformation['extent']
+            )
+        
+            # ----- lock the map frame -----
+            ax2.set_xlim(display_extent[0], display_extent[1])
+            ax2.set_ylim(display_extent[2], display_extent[3])
+            ax2.set_aspect("equal", adjustable="box")
+
+            
+            # Scale bar (use the LOCKED display extent)
+            map_width = display_extent[1] - display_extent[0]
             magnitude = 10 ** np.floor(np.log10(map_width * 0.2))
             scale_length = np.round(map_width * 0.2 / magnitude) * magnitude
             scale_length_rounded = int(scale_length) if scale_length < 10 else scale_length
-
-            margin = (extent[1] - extent[0]) * 0.05
-            bar_height = (extent[3] - extent[2]) * 0.015
-            x_pos = extent[1] - margin - scale_length_rounded
-            y_pos = extent[2] + margin
+            
+            margin = (display_extent[1] - display_extent[0]) * 0.05
+            bar_height = (display_extent[3] - display_extent[2]) * 0.015
+            x_pos = display_extent[1] - margin - scale_length_rounded
+            y_pos = display_extent[2] + margin
 
             rect = Rectangle((x_pos, y_pos), scale_length_rounded, bar_height,
                              fc='white', ec='black')
