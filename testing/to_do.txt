@@ -1,0 +1,16 @@
+to consider:
+
+when running as the new written py scripts or the previously provided nbs they need different config.py and setup.sh configuration. So if those are altered, the respectively other processing line is broken.
+
+As of now, the config and setup is defined for running the py scripts
+
+
+
+
+
+
+
+
+conda install -c conda-forge pyarrow
+
+needs to be installed to properly do extract_frames

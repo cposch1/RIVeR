@@ -48,7 +48,7 @@ from river.core.exceptions import VideoHasNoFrames
 import warnings
 warnings.filterwarnings('always')
 
-output_dir = Path("results/ilh-cam1-pt_defish")
+output_dir = Path("results/ilh-cam1-pt_defish_hd")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]
@@ -103,7 +103,7 @@ def check_video_info(video_path: Path) -> dict:
         cap.release()
 
 # Example usage
-video_path = video_dir / "ilh-cam1-pt_defish" / "20250723-000000-235900"/ "ilh-cam1-pt_20250723-000000-005900.mp4"  # Replace with your video path
+video_path = video_dir / "ilh-cam1-pt_defish_hd" / "20250723-000000-235900"/ "ilh-cam1-pt_20250723-060000-065900.mp4"  # Replace with your video path
 try:
     info = check_video_info(video_path)
     print("\nVideo Information:")
@@ -131,7 +131,7 @@ try:
         "start_frame_number": 0,
         "end_frame_number": None,  # None means process all frames
         "every": 1,  # Extract every second frame
-        "overwrite": False
+        "overwrite": True
     }
     
     # Create frames directory

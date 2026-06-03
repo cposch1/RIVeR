@@ -49,11 +49,11 @@ from river.core.piv_pipeline import (
     run_analyze_all
 )
 # Set up paths
-frame_dir = Path("data/frames/ilh-cam1-pt_20250723-000000-005900")
-frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
-transformation_file = Path("results/ilh-cam1-pt/transformation.json")
-xsections_file = Path("results/ilh-cam1-pt/section.json")
-output_dir = Path("results/ilh-cam1-pt")
+frame_dir = Path("data/frames/ilh-cam1-pt_20250723-060000-065900")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-060000-065900/0000000000.jpg")
+transformation_file = Path("results/ilh-cam1-pt_defish_hd/transformation.json")
+xsections_file = Path("results/ilh-cam1-pt_defish_hd/section.json")
+output_dir = Path("results/ilh-cam1-pt_defish_hd")
 
 # %% [markdown]
 # ## Step 1: Load Required Data

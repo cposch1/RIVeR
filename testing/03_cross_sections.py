@@ -51,11 +51,11 @@ from river.core.compute_section import (
 from river.core.coordinate_transform import transform_real_world_to_pixel
 
 # Set up paths
-frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-060000-065900/0000000000.jpg")
 bath_file = Path("data/bathymetry/ilh_bath.csv")
-csv_cross_path = Path("results/ilh-cam1-pt/cross_points.csv")
-transformation_file = Path("results/ilh-cam1-pt/transformation.json")
-output_dir = Path("results/ilh-cam1-pt")
+csv_cross_path = Path("results/ilh-cam1-pt_defish_hd/cross_points.csv")
+transformation_file = Path("results/ilh-cam1-pt_defish_hd/transformation.json")
+output_dir = Path("results/ilh-cam1-pt_defish_hd")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]

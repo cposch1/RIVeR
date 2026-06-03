@@ -66,12 +66,12 @@ from river.utils.arrow_utils import calculate_multiple_arrows
 
 
 # Set up paths
-frame_dir = Path("data/frames/ilh-cam1-pt_20250723-000000-005900")
-frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
-transformation_file = Path("results/ilh-cam1-pt/transformation.json")
-xsections_file = Path("results/ilh-cam1-pt/section.json")
-piv_results_file = Path("results/ilh-cam1-pt/piv_results.json")
-output_dir = Path("results/ilh-cam1-pt")
+frame_dir = Path("data/frames/ilh-cam1-pt_20250723-060000-065900")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-060000-065900/0000000000.jpg")
+transformation_file = Path("results/ilh-cam1-pt_defish_hd/transformation.json")
+xsections_file = Path("results/ilh-cam1-pt_defish_hd/section.json")
+piv_results_file = Path("results/ilh-cam1-pt_defish_hd/piv_results.json")
+output_dir = Path("results/ilh-cam1-pt_defish_hd")
 
 # %% [markdown]
 # ## Step 1: Load Input Data

@@ -54,10 +54,10 @@ from river.core.coordinate_transform import (
 )
 
 # Set up paths 
-frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
-csv_img_path = Path("results/ilh-cam1-pt/grps_img.csv")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-060000-065900/0000000000.jpg")
+csv_img_path = Path("results/ilh-cam1-pt_defish_hd/grps_img.csv")
 csv_real_path = Path("data/gcps/ilh-cam1-pt_gcps_real.csv")
-output_dir = Path("results/ilh-cam1-pt")
+output_dir = Path("results/ilh-cam1-pt_defish_hd")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]

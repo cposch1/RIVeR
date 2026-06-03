@@ -31,8 +31,8 @@ def _env_path(var_name: str, default: Path) -> Path:
     """Read a path from environment with a Path fallback; expand ~ and resolve."""
     val = os.environ.get(var_name)
     if val:
-        return Path(val).expanduser().resolve()
-    return default.expanduser().resolve()
+        return Path(val).expanduser()
+    return default.expanduser()
 
 
 # ---- Project roots & paths -------------------------------------------------
