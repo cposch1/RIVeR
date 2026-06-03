@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -29,6 +29,10 @@
 # - Transformation matrix and cross-section data saved
 
 # %%
+import sys
+sys.path.append(r"C:\Users\cposch1\RIVeR")
+from river import *
+
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -45,11 +49,11 @@ from river.core.piv_pipeline import (
     run_analyze_all
 )
 # Set up paths
-frame_dir = Path("data/frames/ilh_20250426-200000-205900")
-frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
-transformation_file = Path("results/ilh/transformation.json")
-xsections_file = Path("results/ilh/section.json")
-output_dir = Path("results/ilh")
+frame_dir = Path("data/frames/ilh-cam1-pt_20250723-000000-005900")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
+transformation_file = Path("results/ilh-cam1-pt/transformation.json")
+xsections_file = Path("results/ilh-cam1-pt/section.json")
+output_dir = Path("results/ilh-cam1-pt")
 
 # %% [markdown]
 # ## Step 1: Load Required Data

@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -44,8 +44,9 @@
 # Imports functions and dependencies from the package
 
 # %%
+import sys
+sys.path.append(r"C:\Users\cposch1\RIVeR")
 from river.config import *
-
 
 # %% [markdown]
 # # Step 1: Metadata Extraction
@@ -53,21 +54,25 @@ from river.config import *
 # Automated video metadata extraction from data in the video folder
 
 # %%
+from pathlib import Path
+from typing import Iterable, Tuple, Dict, Optional
+import cv2
+import csv
+import re
+
+
+# ---------- Helpers ----------
+
 def _fmt_duration_hhmmss(total_seconds: Optional[float]) -> str:
-    """Format seconds as hh:mm:ss (always include hours, zero-padded). Empty string if None."""
     if total_seconds is None:
         return ""
     secs = int(round(total_seconds))
     h, rem = divmod(secs, 3600)
     m, s = divmod(rem, 60)
-    return f"{h:02d}{m:02d}{s:02d}"
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def _safe_duration_via_ratio(video_path: Path) -> Optional[float]:
-    """
-    Fallback duration: try seeking to end and reading timestamp in msec.
-    Returns seconds or None (backend dependent).
-    """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return None
@@ -82,9 +87,6 @@ def _safe_duration_via_ratio(video_path: Path) -> Optional[float]:
 
 
 def check_video_info(video_path: Path) -> dict:
-    """
-    Extract: duration, total_frames, fps, resolution, size_gb, bitrate_mbps
-    """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise ValueError(f"Could not open video file: {video_path}")
@@ -101,12 +103,12 @@ def check_video_info(video_path: Path) -> dict:
     size_gb = size_bytes / (1024 ** 3)
 
     duration_s = None
-    if total_frames > 0 and fps and fps > 0:
+    if total_frames > 0 and fps > 0:
         duration_s = total_frames / fps
 
-    if duration_s is None or duration_s == 0:
+    if not duration_s:
         fallback_s = _safe_duration_via_ratio(video_path)
-        if fallback_s and fallback_s > 0:
+        if fallback_s:
             duration_s = fallback_s
 
     bitrate_mbps = (size_bytes * 8 / duration_s / 1e6) if duration_s else None
@@ -121,7 +123,7 @@ def check_video_info(video_path: Path) -> dict:
     }
 
 
-# ---------- Main scan + CSV writing ----------
+# ---------- Main ----------
 
 def scan_videos_and_write_csvs(
     videos_root: Path,
@@ -132,32 +134,39 @@ def scan_videos_and_write_csvs(
     videos_root = videos_root.resolve()
     suffixes_set = {s.lower() for s in suffixes}
 
+    print(f"\n▶ Scanning: {videos_root}")
+    print(f"Exists: {videos_root.exists()}")
+
     pat = re.compile(
-        r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})$',
-        re.IGNORECASE
+        r'^(?P<camera>.+?)_(?P<date>\d{8})-(?P<start>\d{6})-(?P<end>\d{6})$'
     )
 
     rows_per_camera = {}
     errors_per_camera = {}
 
-    for path in videos_root.rglob("*"):
+    all_files = list(videos_root.rglob("*"))
+    print(f"Total files found: {len(all_files)}")
+
+    for path in all_files:
+
         if path.is_dir():
             continue
+
         if path.suffix.lower() not in suffixes_set:
             continue
 
-        stem = path.stem
-        if stem.startswith("._"):
-            continue
+        stem = path.stem.strip()
 
         m = pat.match(stem)
         if not m:
+            print(f"⚠ skipped (pattern): {path.name}")
             continue
 
         camera = m.group("camera")
         date = m.group("date")
         time = m.group("start")
-        # clock_end parsed but not used anymore
+
+        print(f"✔ processing: {path.name}")
 
         try:
             info = check_video_info(path)
@@ -173,98 +182,86 @@ def scan_videos_and_write_csvs(
                 "size_gb": info["size_gb"],
                 "path": str(path.resolve()),
             }
+
             rows_per_camera.setdefault(camera, []).append(row)
 
         except Exception as e:
-            try:
-                fallback_size_gb = round(path.stat().st_size / (1024 ** 3), 2)
-            except Exception:
-                fallback_size_gb = None
+            fallback_size_gb = round(path.stat().st_size / (1024 ** 3), 2)
 
             errors_per_camera.setdefault(camera, []).append({
                 "date_yyyymmdd": date,
                 "time_hhmmss": time,
-                "duration_hhmmss": info["duration_hhmmss"],
-                "total_frames": info["total_frames"],
-                "fps": info["fps"],
-                "resolution": info["resolution"],
-                "bitrate_mbps": info["bitrate_mbps"],
-                "size_gb": info["size_gb"],
-                "error_message": str(e)
+                "duration_hhmmss": None,
+                "total_frames": None,
+                "fps": None,
+                "resolution": None,
+                "bitrate_mbps": None,
+                "size_gb": fallback_size_gb,
+                "path": str(path.resolve()),
+                "error_message": str(e),
             })
 
-    # Write meta CSVs
+    print(f"\nVideos matched: {sum(len(v) for v in rows_per_camera.values())}")
+
+    # ---------- Write CSVs ----------
+
     camera_to_csv = {}
+
     for camera, rows in rows_per_camera.items():
         rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
 
         csv_path = videos_root / camera / f"_{camera}_meta.csv"
-        camera_to_csv[camera] = csv_path
-        write_header = overwrite or not csv_path.exists()
 
-        with csv_path.open("w" if write_header else "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "date_yyyymmdd",
-                    "time_hhmmss",
-                    "duration_hhmmss",
-                    "total_frames",
-                    "fps",
-                    "resolution",
-                    "bitrate_mbps",
-                    "size_gb",
-                    "path",
-                ],
-            )
-            if write_header:
-                writer.writeheader()
+        # ✅ FIX: ensure folder exists
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        camera_to_csv[camera] = csv_path
+
+        with csv_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer.writeheader()
             writer.writerows(rows)
 
-    # Write error CSVs
+    # ---------- Error CSVs ----------
+
     err_to_csv = {}
+
     for camera, rows in errors_per_camera.items():
         rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
 
-        err_csv_path = videos_root / camera / f"_{camera}_error_log.csv"
-        err_to_csv[camera] = err_csv_path
-        write_header = overwrite or not err_csv_path.exists()
+        err_path = videos_root / camera / f"_{camera}_error_log.csv"
 
-        with err_csv_path.open("w" if write_header else "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "date_yyyymmdd",
-                    "time_hhmmss",
-                    "duration_hhmmss",
-                    "total_frames",
-                    "fps",
-                    "resolution",
-                    "bitrate_mbps",
-                    "size_gb",
-                    "path",
-                    "error_message"
-                ],
-            )
-            if write_header:
-                writer.writeheader()
+        # ✅ FIX
+        err_path.parent.mkdir(parents=True, exist_ok=True)
+
+        err_to_csv[camera] = err_path
+
+        with err_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer.writeheader()
             writer.writerows(rows)
 
     return camera_to_csv, err_to_csv
 
 
-# List created files
-camera_csvs, err_csvs = scan_videos_and_write_csvs(video_dir, overwrite=True)
+# ---------- Run ----------
 
-def format_dict_as_lines(d: dict) -> str:
+camera_csvs, err_csvs = scan_videos_and_write_csvs(video_dir)
+
+
+def pretty_print(d):
     if not d:
-        return "  (none)"
-    return "\n".join(f"  {cam} -> {path}" for cam, path in sorted(d.items()))
+        print("  (none)")
+    else:
+        for k, v in d.items():
+            print(f"  {k} → {v}")
 
-print("Following metadata files were created:")
-print(format_dict_as_lines(camera_csvs))
-print("\nFollowing error log files were created:")
-print(format_dict_as_lines(err_csvs))
+
+print("\n✅ Metadata CSVs:")
+pretty_print(camera_csvs)
+
+print("\n⚠ Error CSVs:")
+pretty_print(err_csvs)
 
 # %% [markdown]
 # # Step 2: Frame Extraction
@@ -298,17 +295,17 @@ print(format_dict_as_lines(err_csvs))
 ### DEFINE PARAMETERS ###
 #########################
 
-every = 1  # take every Nth frame
+every = 2  # take every Nth frame
 start_frame_number = 0
 end_frame_number = None    # process all frames            
-overwrite_frames = True    # or True if you want to force re-extraction/deletion of older frames
+overwrite_frames = False    # or True if you want to force re-extraction/deletion of older frames
 
 
 #########################
 ### USER FILTERS ###
 #########################
 
-camera_filter = None       # e.g. "ilh-cam1-pt"
+camera_filter = "ilhh"       # e.g. "ilh-cam1-pt"
 start_date = None          # e.g. "20250426"
 end_date = None
 start_time = None          # e.g. "120000"
@@ -597,8 +594,8 @@ print(f"\nDONE.\nProcessed: {processed} video(s).\nSkipped: {skipped} video(s)."
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "chamb_02"
-gcp_date = "20260223"         # in format YYYYMMDD
+gcp_cam = "ilhh"
+gcp_date = "20250723"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
@@ -944,13 +941,13 @@ alpha_vel = 1
 ### DEFINE PARAMETERS ###
 #########################
 
-gcp_cam = "chamb_02"
-gcp_date = "20260223"         # in format YYYYMMDD
+gcp_cam = "ilhh"
+gcp_date = "20250723"         # in format YYYYMMDD
 gcp_time = "120000"           # in format HHMMSS
 
 #########################
 
-pt_name = "pt_02"
+pt_name = "ilhh_pt"
 
 # %%
 # Load image
@@ -960,6 +957,7 @@ img = mpimg.imread(str(frame_path))
 
 # Do transformation
 transformation = transform(df_frames,gcp_cam,gcp_date,gcp_time)
+print(gcp_cam,gcp_date,gcp_time)
 
 # Load transformation matrix
 transf_file = rect_dir / gcp_cam / (f"{gcp_cam}_transform_{gcp_date}_{gcp_time}.json")

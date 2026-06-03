@@ -37,11 +37,14 @@ def _env_path(var_name: str, default: Path) -> Path:
 
 # ---- Project roots & paths -------------------------------------------------
 
-# Default project root: directory that contains this file
-_default_root = Path(__file__).resolve().parent
+from pathlib import Path
+_default_root = Path(__file__).resolve()
 
-root_dir   = _env_path("PROJECT_DIR", _default_root)
-data_dir   = _env_path("DATA_DIR", root_dir / "data")
+# Default project root: directory that contains this file
+root_dir = _default_root.parent
+
+data_dir = root_dir / "testing" / "data"
+results_dir = root_dir / "testing" / "results"
 
 video_dir  = _env_path("VIDEO_DIR", data_dir / "videos")
 frames_dir = _env_path("FRAMES_DIR", data_dir / "frames")

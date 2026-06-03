@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -33,6 +33,10 @@
 # - Careful point selection across the frame to capture perspective
 
 # %%
+import sys
+sys.path.append(r"C:\Users\cposch1\RIVeR")
+from river import *
+
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -50,10 +54,10 @@ from river.core.coordinate_transform import (
 )
 
 # Set up paths 
-frame_path = Path("data/frames/ilh-cam1-pt_20250426-120000-125900/0000000000.jpg")
-csv_img_path = Path("results/ilh/grps_img.csv")
-csv_real_path = Path("data/grps/grps_real.csv")
-output_dir = Path("results/ilh")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
+csv_img_path = Path("results/ilh-cam1-pt/grps_img.csv")
+csv_real_path = Path("data/gcps/ilh-cam1-pt_gcps_real.csv")
+output_dir = Path("results/ilh-cam1-pt")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]

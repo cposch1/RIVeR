@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -38,6 +38,10 @@
 #    - Water level
 
 # %%
+import sys
+sys.path.append(r"C:\Users\cposch1\RIVeR")
+from river import *
+
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -49,20 +53,25 @@ notebook_dir = Path.cwd()
 if str(notebook_dir) not in sys.path:
     sys.path.append(str(notebook_dir))
 
-# Import the function to plot arrows
-from utils.arrow_utils import calculate_multiple_arrows
-
 # Import RIVeR modules
 from river.core.compute_section import update_current_x_section
 
+if str(notebook_dir) not in sys.path:
+    sys.path.append(str(notebook_dir))
+    
+# Import the function to plot arrows
+from river.utils.arrow_utils import calculate_multiple_arrows
+
+
+
 
 # Set up paths
-frame_dir = Path("data/frames/pisco")
-frame_path = Path("data/frames/pisco/0000000004.jpg")
-transformation_file = Path("results/pisco/transformation.json")
-xsections_file = Path("results/pisco/section.json")
-piv_results_file = Path("results/pisco/piv_results.json")
-output_dir = Path("results/pisco")
+frame_dir = Path("data/frames/ilh-cam1-pt_20250723-000000-005900")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
+transformation_file = Path("results/ilh-cam1-pt/transformation.json")
+xsections_file = Path("results/ilh-cam1-pt/section.json")
+piv_results_file = Path("results/ilh-cam1-pt/piv_results.json")
+output_dir = Path("results/ilh-cam1-pt")
 
 # %% [markdown]
 # ## Step 1: Load Input Data
@@ -124,7 +133,7 @@ frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 # %%
 fps = 25
-step = 2
+step = 1
 
 alpha = xsections['section1']['alpha']
 num_stations = xsections['section1']['num_stations']

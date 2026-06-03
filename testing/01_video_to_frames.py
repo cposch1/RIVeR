@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -30,6 +30,10 @@
 # - Sufficient storage space for frames (tip: estimate ~0.5-2MB per frame)
 
 # %%
+import sys
+sys.path.append(r"C:\Users\cposch1\RIVeR")
+
+# %%
 # Import required libraries
 from pathlib import Path
 import numpy as np
@@ -44,7 +48,7 @@ from river.core.exceptions import VideoHasNoFrames
 import warnings
 warnings.filterwarnings('always')
 
-output_dir = Path("results/ilh")
+output_dir = Path("results/ilh-cam1-pt_defish")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]
@@ -99,7 +103,7 @@ def check_video_info(video_path: Path) -> dict:
         cap.release()
 
 # Example usage
-video_path = video_dir / "20250426-000000-235900"/ "ilh-cam1-pt_20250426-120000-125900.avi"  # Replace with your video path
+video_path = video_dir / "ilh-cam1-pt_defish" / "20250723-000000-235900"/ "ilh-cam1-pt_20250723-000000-005900.mp4"  # Replace with your video path
 try:
     info = check_video_info(video_path)
     print("\nVideo Information:")
@@ -126,7 +130,7 @@ try:
         "frames_dir": frames_dir / video_path.stem,  # Create subfolder for frames
         "start_frame_number": 0,
         "end_frame_number": None,  # None means process all frames
-        "every": 25,  # Extract every second frame
+        "every": 1,  # Extract every second frame
         "overwrite": False
     }
     

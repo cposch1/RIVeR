@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -29,6 +29,10 @@
 # - Transformation matrix from previous steps
 
 # %%
+import sys
+sys.path.append(r"C:\Users\cposch1\RIVeR")
+from river import *
+
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -47,11 +51,11 @@ from river.core.compute_section import (
 from river.core.coordinate_transform import transform_real_world_to_pixel
 
 # Set up paths
-frame_path = Path("data/frames/ilh_20250426-200000-205900/0000000000.jpg")
+frame_path = Path("data/frames/ilh-cam1-pt_20250723-000000-005900/0000000000.jpg")
 bath_file = Path("data/bathymetry/ilh_bath.csv")
-csv_cross_path = Path("results/ilh/cross_points.csv")
-transformation_file = Path("results/ilh/transformation.json")
-output_dir = Path("results/ilh")
+csv_cross_path = Path("results/ilh-cam1-pt/cross_points.csv")
+transformation_file = Path("results/ilh-cam1-pt/transformation.json")
+output_dir = Path("results/ilh-cam1-pt")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]
@@ -145,7 +149,7 @@ xsections = {
         "east_r": x_ri,      # Right bank easting
         "north_r": y_ri,      # Right bank northing
         "level": lvl,       # Water level
-        "num_stations": 5,   # Number of analysis points
+        "num_stations": 15,   # Number of analysis points
         "alpha": 1,           # Velocity correction coefficient
         "bath": str(bath_file),  # Path to bathymetry file
         "left_station": 2.0   # Offset for first station from left bank
