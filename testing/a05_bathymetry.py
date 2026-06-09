@@ -35,6 +35,11 @@ def transform_path(cam, date, time_):
     return rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
 
 
+# ✅ NEW: JSON path
+def xs_json_path(cam, date, time_):
+    return bathy_dir / cam / f"{cam}_xs_{date}_{time_}.json"
+
+
 # ✅ NEW: per-camera max XS length
 def get_max_xs_length_per_camera():
     max_len_dict = {}
@@ -59,7 +64,6 @@ def get_max_xs_length_per_camera():
                     continue
 
                 (x1, y1), (x2, y2) = pts
-
                 length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
                 if length > max_len:
@@ -87,7 +91,6 @@ def main():
     npts = args.num_points
 
     df = load_frames_index()
-
     df_unique = df.drop_duplicates(
         ["camera", "date_yyyymmdd", "time_hhmmss"]
     )
@@ -122,6 +125,9 @@ def main():
                         continue
                     pts.append((float(r[0]), float(r[1])))
 
+            if len(pts) != 2:
+                continue
+
             (x_le, y_le), (x_ri, y_ri) = pts
 
             # -------------------------
@@ -147,7 +153,7 @@ def main():
             bath_points = [(float(x), float(bath(x))) for x in xs]
 
             # -------------------------
-            # Save CSV
+            # Save bathymetry CSV
             # -------------------------
             out_dir = bathy_dir / cam
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -160,17 +166,45 @@ def main():
                 w.writerows(bath_points)
 
             # -------------------------
+            # ✅ COMPUTE PIXEL COORDS
+            # -------------------------
+            left_px = transform_real_world_to_pixel(x_le, y_le, T)
+            right_px = transform_real_world_to_pixel(x_ri, y_ri, T)
+
+            # -------------------------
+            # ✅ CREATE JSON
+            # -------------------------
+            xsections = {
+                "section1": {
+                    "east_l": x_le,
+                    "north_l": y_le,
+                    "east_r": x_ri,
+                    "north_r": y_ri,
+                    "level": lvl,
+                    "num_stations": npts,
+                    "alpha": 1,
+                    "bath": str(bath_file),
+                    "left_station": 2.0,
+                    "xl": float(left_px[0]),
+                    "yl": float(left_px[1]),
+                    "xr": float(right_px[0]),
+                    "yr": float(right_px[1]),
+                    "rw_length": float(length)
+                }
+            }
+
+            json_file = xs_json_path(cam, date, time_)
+
+            with json_file.open("w") as f:
+                json.dump(xsections, f, indent=2)
+
+            # -------------------------
             # Visualization
             # -------------------------
             frame = mpimg.imread(find_reference_frame(row))
 
-            left_px = transform_real_world_to_pixel(x_le, y_le, T)
-            right_px = transform_real_world_to_pixel(x_ri, y_ri, T)
-
             stations = np.array([p[0] for p in bath_points])
             stages = np.array([p[1] for p in bath_points])
-
-            # ✅ stabilize precision
             stages = np.round(stages, 6)
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
@@ -188,7 +222,6 @@ def main():
 
             # ---- RIGHT: bathymetry ----
             ax2.plot(stations, stages, 'k-', linewidth=2)
-
             ax2.axhline(y=lvl, color='#6CD4FF', linestyle='--')
 
             ax2.fill_between(
@@ -200,12 +233,10 @@ def main():
                 alpha=0.3
             )
 
-            # ✅ per-camera xlim
             max_xs_length = max_xs_length_dict.get(cam, length)
             margin = 0.05 * max_xs_length
 
             ax2.set_xlim(-margin, max_xs_length + margin)
-
             ax2.set_xlabel("Distance from left bank (m)")
             ax2.set_ylabel("Elevation (m)")
             ax2.set_title("Bathymetry Profile")
@@ -220,15 +251,8 @@ def main():
             out_dir_img.mkdir(parents=True, exist_ok=True)
 
             out_img = out_dir_img / f"{cam}_bath_{date}_{time_}.png"
-            print(out_img)
 
-            fig.savefig(
-                out_img,
-                dpi=300,
-                bbox_inches="tight",
-                pad_inches=0
-            )
-            
+            fig.savefig(out_img, dpi=300, bbox_inches="tight", pad_inches=0)
             plt.close(fig)
 
         except Exception as e:

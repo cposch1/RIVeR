@@ -8,4 +8,9 @@ As of now, the config and setup is defined for running the py scripts
 
 to do:
 
-think about making orthorectification persistent and cross-section selection only once a day
+think about using cross-section selection only once a day
+
+fixes for piv needed:
+- output not confident
+- issues with negative masks/rois
+- all-NaN values issue
