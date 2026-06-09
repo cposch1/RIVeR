@@ -398,15 +398,30 @@ class OrthoApp:
             self.selected_camera = None
             return
         self.selected_camera = self.lb_camera.get(sel[0])
-        # Load persisted global extent for this camera (if any)
-        self.global_extent = None
-        p = global_extent_path(self.selected_camera)
-        if p.exists():
-            try:
-                with p.open("r") as f:
-                    self.global_extent = tuple(json.load(f))
-            except Exception:
-                self.global_extent = None
+
+        
+        # Load limits into global extent or load persisted global extent for this camera (if any)
+        if self.custom_xlim is not None and self.custom_ylim is not None:
+            # ✅ User-defined mode (deterministic)
+            self.global_extent = (
+                self.custom_xlim[0],
+                self.custom_xlim[1],
+                self.custom_ylim[0],
+                self.custom_ylim[1]
+            )
+        else:
+            # ✅ Fallback: load or compute global extent
+            self.global_extent = None
+            p = global_extent_path(self.selected_camera)
+        
+            if p.exists():
+                try:
+                    with p.open("r") as f:
+                        self.global_extent = tuple(json.load(f))
+                except Exception:
+                    self.global_extent = None
+
+                
         self._populate_dates()
         self._clear_points_state(due_to_selection_change=True)
 
@@ -530,8 +545,9 @@ class OrthoApp:
                 writer = csv.writer(f)
                 writer.writerows(self.points)
 
-            gcps_img_png = gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.png"
-            gcps_img_png.parent.mkdir(parents=True, exist_ok=True)
+            gcps_img_dir = gcps_dir / cam / "gcps_imgs" 
+            gcps_img_dir.mkdir(parents=True, exist_ok=True)
+            gcps_img_png = gcps_img_dir / f"{cam}_gcps_img_{date}_{time_}.png"
             # Save the current annotated figure
             self.fig.savefig(str(gcps_img_png))
 
@@ -713,14 +729,52 @@ class OrthoApp:
 
         fig.tight_layout()
 
-        # Save orthorectified image
-        ortho_img = rect_dir / cam / f"{cam}_orthorectification_{date}_{time_}.png"
-        ortho_img.parent.mkdir(parents=True, exist_ok=True)
+        # Save orthorectification image
+        
+        ortho_dir = rect_dir / cam / "orthorectification_imgs"
+        ortho_dir.mkdir(parents=True, exist_ok=True)
+        
+        ortho_img = ortho_dir / f"{cam}_orthorect_{date}_{time_}.png"
         fig.savefig(str(ortho_img))
+
         print(f"[Saved] Orthorectified PNG: {ortho_img}")
 
         # Show the figure (as requested)
         plt.show()
+
+        # ---- Save orthorectified image only (no overlays) ----
+        fig_clean, ax_clean = plt.subplots(figsize=(6, 4))
+    
+        ax_clean.imshow(
+            transformation['transformed_img'],
+            extent=transformation['extent']
+        )
+    
+        # Apply same display limits
+        if self.custom_xlim is not None:
+            ax_clean.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
+        else:
+            ax_clean.set_xlim(display_extent[0], display_extent[1])
+    
+        if self.custom_ylim is not None:
+            ax_clean.set_ylim(self.custom_ylim[0], self.custom_ylim[1])
+        else:
+            ax_clean.set_ylim(display_extent[2], display_extent[3])
+    
+        ax_clean.set_aspect("equal", adjustable="box")
+        #ax_clean.axis("off")  # ✅ removes axes, labels, ticks
+    
+        
+        ortho_clean_dir = rect_dir / cam / "ortho_imgs"
+        ortho_clean_dir.mkdir(parents=True, exist_ok=True)
+        
+        ortho_clean = ortho_clean_dir / f"{cam}_orthoimg_{date}_{time_}.png"
+
+        fig_clean.savefig(str(ortho_clean), bbox_inches="tight", pad_inches=0)
+    
+        plt.close(fig_clean)  # prevent extra window
+    
+        print(f"[Saved] Clean ortho image: {ortho_clean}")
 
         # Save transformation matrix JSON
         try:
@@ -765,7 +819,8 @@ def main(argv: List[str]) -> int:
         nargs=2,
         type=float,
         metavar=("XMIN", "XMAX"),
-        help="Manually set x-axis limits for display"
+        default=[-20, 50],
+        help="Manually set x-axis limits for display (default: -20 50)"
     )
     
     parser.add_argument(
@@ -773,7 +828,8 @@ def main(argv: List[str]) -> int:
         nargs=2,
         type=float,
         metavar=("YMIN", "YMAX"),
-        help="Manually set y-axis limits for display"
+        default=[-10, 20],
+        help="Manually set y-axis limits for display (default: -10 20)"
     )
     args = parser.parse_args(argv)
 

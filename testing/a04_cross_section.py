@@ -51,14 +51,16 @@ parser.add_argument(
     nargs=2,
     type=float,
     metavar=("XMIN", "XMAX"),
-    help="Manual x-axis limits"
+    default=[-20, 50],
+    help="Manually set x-axis limits for display (default: -20 50)"
 )
 parser.add_argument(
     "--ylim",
     nargs=2,
     type=float,
     metavar=("YMIN", "YMAX"),
-    help="Manual y-axis limits"
+    default=[-10, 20],
+    help="Manually set y-axis limits for display (default: -10 20)"
 )
 
 args = parser.parse_args()

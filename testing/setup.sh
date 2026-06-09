@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+conda activate velo
+
 # --------------------------------------------------
 # Find absolute paths (robust, no guessing)
 # --------------------------------------------------
