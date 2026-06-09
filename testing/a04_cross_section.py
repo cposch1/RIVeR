@@ -85,7 +85,9 @@ def xs_coord_path(cam, date, time_):
 
 
 def xs_img_path(cam, date, time_):
-    return bathy_dir / cam / f"{cam}_xs_{date}_{time_}.png"
+    out_dir_img = bathy_dir / cam / "xs_imgs"
+    out_dir_img.mkdir(parents=True, exist_ok=True)
+    return out_dir_img / f"{cam}_xs_{date}_{time_}.png"
 
 
 def load_global_extent(cam):
