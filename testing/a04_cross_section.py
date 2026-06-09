@@ -23,17 +23,20 @@ import sys
 import json
 import csv
 import argparse
+import signal
 from pathlib import Path
 from typing import Tuple, List
 
 import numpy as np
 import pandas as pd
+
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+
 
 # ------------------------------------------------------------
 # Argument parsing
@@ -43,10 +46,25 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--verbose", action="store_true",
                     help="Enable verbose logging")
+parser.add_argument(
+    "--xlim",
+    nargs=2,
+    type=float,
+    metavar=("XMIN", "XMAX"),
+    help="Manual x-axis limits"
+)
+parser.add_argument(
+    "--ylim",
+    nargs=2,
+    type=float,
+    metavar=("YMIN", "YMAX"),
+    help="Manual y-axis limits"
+)
+
 args = parser.parse_args()
 
 # ------------------------------------------------------------
-# Logging BEFORE config import
+# Logging
 # ------------------------------------------------------------
 import logging
 logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
@@ -56,10 +74,10 @@ logging.getLogger("river.config").setLevel(
 
 from river.config import *
 
+
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
-
 def xs_coord_path(cam, date, time_):
     return bathy_dir / cam / f"{cam}_xs_coord_{date}_{time_}.csv"
 
@@ -94,11 +112,15 @@ def xs_exists(cam, date, time_):
 # ------------------------------------------------------------
 # GUI App
 # ------------------------------------------------------------
-
 class CrossSectionApp:
-    def __init__(self, master, df_frames):
+    def __init__(self, master, df_frames, xlim=None, ylim=None):
         self.master = master
         self.df_frames = df_frames
+
+        
+        self.custom_xlim = xlim
+        self.custom_ylim = ylim
+
 
         self.selected_camera = None
         self.selected_date = None
@@ -110,10 +132,13 @@ class CrossSectionApp:
         self.canvas = self.fig.canvas
 
         self._build_ui()
+
+        # ✅ HANDLE WINDOW CLOSE PROPERLY
+        self.master.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._populate_cameras()
 
     # ---------------- UI ----------------
-
     def _build_ui(self):
         self.master.title("RIVeR-ICE — Cross-Section Selection")
         self.master.geometry("1200x800")
@@ -146,7 +171,6 @@ class CrossSectionApp:
         self.fig_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # ---------------- Population ----------------
-
     def _populate_cameras(self):
         self.lb_cam.delete(0, tk.END)
         cams = sorted(self.df_frames["camera"].unique())
@@ -184,14 +208,11 @@ class CrossSectionApp:
         for i, t in enumerate(times):
             self.lb_time.insert(tk.END, t)
 
-            # ✅ AVAILABLE → black
             if transform_exists(self.selected_camera, self.selected_date, t):
                 self.lb_time.itemconfig(i, {'fg': 'black'})
             else:
-                # ❌ NOT available → grey
                 self.lb_time.itemconfig(i, {'fg': 'grey'})
 
-            # ✅ DONE → green background
             if xs_exists(self.selected_camera, self.selected_date, t):
                 self.lb_time.itemconfig(i, {'bg': '#d0f0d0'})
 
@@ -202,10 +223,8 @@ class CrossSectionApp:
         self.selected_time = self.lb_time.get(sel[0])
 
     # ---------------- Core ----------------
-
     def load_ortho(self):
 
-        # ✅ auto reset points
         self.points_rw.clear()
 
         if not (self.selected_camera and self.selected_date and self.selected_time):
@@ -240,9 +259,33 @@ class CrossSectionApp:
 
         self.ax.clear()
         self.ax.imshow(trans["transformed_img"], extent=trans["extent"])
-        self.ax.set_xlim(extent[0], extent[1])
-        self.ax.set_ylim(extent[2], extent[3])
+        # ✅ Apply custom limits if provided
+        if self.custom_xlim is not None:
+            self.ax.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
+        else:
+            self.ax.set_xlim(extent[0], extent[1])
+        
+        if self.custom_ylim is not None:
+            self.ax.set_ylim(self.custom_ylim[0], self.custom_ylim[1])
+        else:
+            self.ax.set_ylim(extent[2], extent[3])
+        
         self.ax.set_aspect("equal")
+
+
+        # ✅ ADD GRID HERE
+        xmin, xmax = self.ax.get_xlim()
+        ymin, ymax = self.ax.get_ylim()
+        
+        x_ticks = np.arange(np.floor(xmin / 2) * 2, np.ceil(xmax / 2) * 2, 2)
+        y_ticks = np.arange(np.floor(ymin / 2) * 2, np.ceil(ymax / 2) * 2, 2)
+        
+        self.ax.set_xticks(x_ticks)
+        self.ax.set_yticks(y_ticks)
+        
+        self.ax.grid(True, color='yellow', alpha=0.5, linewidth=0.5)
+
+        
         self.ax.set_title("Click LEFT bank then RIGHT bank")
 
         self.cid = self.canvas.mpl_connect("button_press_event", self._on_click)
@@ -284,29 +327,44 @@ class CrossSectionApp:
 
         messagebox.showinfo("Saved", f"Cross-section saved:\n{p}")
 
-        # ✅ update UI coloring
         self._on_date()
+
+    # ✅ CLEAN EXIT HANDLER
+    def _on_close(self):
+        print("[INFO] Closing GUI...")
+        try:
+            plt.close('all')
+            self.master.quit()
+            self.master.destroy()
+        finally:
+            os._exit(0)
 
 
 # ------------------------------------------------------------
 # Entry point
 # ------------------------------------------------------------
-
-
 def main():
     frames_root = Path(os.environ["FRAMES_DIR"])
     df_frames = pd.read_parquet(frames_root / "_frame_paths.parquet")
 
     root = tk.Tk()
-    app = CrossSectionApp(root, df_frames)
+    app = CrossSectionApp(root, df_frames, xlim=args.xlim, ylim=args.ylim)
 
-    try:
-        root.mainloop()
-    finally:
-        # ✅ force proper cleanup
-        root.destroy()
-        plt.close('all')   # VERY important for matplotlib
-        sys.exit(0)        # ensure process fully exits
+    # ✅ ENABLE CTRL+C
+    def handle_sigint(sig, frame):
+        print("\n[INFO] Ctrl+C detected — exiting")
+        plt.close('all')
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    # ✅ keep loop responsive to signals
+    def _poll():
+        root.after(100, _poll)
+
+    _poll()
+
+    root.mainloop()
 
 
 if __name__ == "__main__":

@@ -199,10 +199,13 @@ def global_extent_path(cam: str) -> Path:
 # ---------------------------
 
 class OrthoApp:
-    def __init__(self, master: tk.Tk, df_frames: pd.DataFrame, frames_root: Path):
+    def __init__(self, master: tk.Tk, df_frames: pd.DataFrame, frames_root: Path, xlim=None, ylim=None):
         self.master = master
         self.df_frames = df_frames.copy()
         self.frames_root = frames_root
+
+        self.custom_xlim = xlim
+        self.custom_ylim = ylim
 
         self.global_extent: Optional[Tuple[float, float, float, float]] = None
 
@@ -643,8 +646,19 @@ class OrthoApp:
             )
         
             # ----- lock the map frame -----
-            ax2.set_xlim(display_extent[0], display_extent[1])
-            ax2.set_ylim(display_extent[2], display_extent[3])
+            
+            # X limits
+            if self.custom_xlim is not None:
+                ax2.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
+            else:
+                ax2.set_xlim(display_extent[0], display_extent[1])
+
+            # Y limits
+            if self.custom_ylim is not None:
+                ax2.set_ylim(self.custom_ylim[0], self.custom_ylim[1])
+            else:
+                ax2.set_ylim(display_extent[2], display_extent[3])
+
             ax2.set_aspect("equal", adjustable="box")
 
             
@@ -746,6 +760,21 @@ def main(argv: List[str]) -> int:
                         help="Show INFO logs from river.config during this run.")
     parser.add_argument("--refresh-index", action="store_true",
                         help="Rescan FRAMES_DIR to rebuild _frame_paths.parquet and _frame_paths.csv before launching the GUI.")
+    parser.add_argument(
+        "--xlim",
+        nargs=2,
+        type=float,
+        metavar=("XMIN", "XMAX"),
+        help="Manually set x-axis limits for display"
+    )
+    
+    parser.add_argument(
+        "--ylim",
+        nargs=2,
+        type=float,
+        metavar=("YMIN", "YMAX"),
+        help="Manually set y-axis limits for display"
+    )
     args = parser.parse_args(argv)
 
     # Prefer env var; fallback to frames_dir imported from river.config
@@ -775,7 +804,7 @@ def main(argv: List[str]) -> int:
 
     # Launch GUI
     root = tk.Tk()
-    app = OrthoApp(root, df_frames, frames_root)
+    app = OrthoApp(root, df_frames, frames_root, xlim=args.xlim,ylim=args.ylim)
     root.mainloop()
     return 0
 

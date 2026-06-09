@@ -6,11 +6,6 @@ As of now, the config and setup is defined for running the py scripts
 
 
 
+to do:
 
-
-
-
-
-conda install -c conda-forge pyarrow
-
-needs to be installed to properly do extract_frames
+think about making orthorectification persistent and cross-section selection only once a day
