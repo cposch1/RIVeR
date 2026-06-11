@@ -49,11 +49,11 @@ from river.core.piv_pipeline import (
     run_analyze_all
 )
 # Set up paths
-frame_dir = Path("data/frames/ilh-cam1-pt_20250723-060000-065900")
-frame_path = Path("data/frames/ilh-cam1-pt_20250723-060000-065900/0000000000.jpg")
-transformation_file = Path("results/ilh-cam1-pt_defish_hd/transformation.json")
-xsections_file = Path("results/ilh-cam1-pt_defish_hd/section.json")
-output_dir = Path("results/ilh-cam1-pt_defish_hd")
+frame_dir = Path("data/frames/ilh-cam1-pt/20250723/000000")
+frame_path = Path("data/frames/ilh-cam1-pt/20250723/000000/0000000000.jpg")
+transformation_file = Path("data/orthorectification/ilh-cam1-pt/ilh-cam1-pt_transform_20250723_000000.json")
+xsections_file = Path("data/bathymetry/ilh-cam1-pt/ilh-cam1-pt_xs_20250723_000000.json")
+output_dir = Path("results/piv/ilh-cam1-pt_2/")
 
 # %% [markdown]
 # ## Step 1: Load Required Data
@@ -238,7 +238,7 @@ piv_results = run_test(
     mask=mask,
     bbox=bbox,
     interrogation_area_1=piv_params["interrogation_area_1"],
-    interrogation_area_2=piv_params["interrogation_area_2"]
+    interrogation_area_2=piv_params["interrogation_area_2"],
 )
 
 # Plot results
