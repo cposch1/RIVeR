@@ -5,7 +5,7 @@ requires = ["setuptools>=65.5.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "river-cli"
+name = "river-ice"
 version = "3.3.0"
 description = "A CLI application for Large Scale Particle Image Velocimetry (LSPIV)."
 readme = "readme.md"
@@ -22,7 +22,10 @@ dependencies = [
     "tqdm >= 4.67.0",
     "numba == 0.60.0",
     "tablib[xlsx,xls,ods] == 3.8.0",
-    "pyfftw == 0.15.0"
+    "pyfftw == 0.15.0",
+    "numpy",
+    "pandas",
+    "pyarrow"
 ]
 license = "AGPL-3.0-or-later"
 classifiers = [

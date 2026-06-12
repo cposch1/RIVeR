@@ -6,7 +6,7 @@ As of now, the config and setup is defined for running the py scripts
 
 
 
-to do:
+TO DO:
 
 think about using cross-section selection only once a day
 
@@ -14,3 +14,10 @@ fixes for piv needed:
 - output not confident
 - issues with negative masks/rois
 - all-NaN values issue
+
+additions to last scripts
+- overwrite function
+- flag passing (default values)
+- verbose option and date subsetting
+
+make it possible to run on the server
