@@ -155,6 +155,14 @@ def load_frames_index_only(frames_root: Path) -> pd.DataFrame:
         raise RuntimeError(f"Failed to read frames index at {parquet_path}: {e}")
 
 
+def _fix_windows_path(p: str) -> str:
+    """Convert Git Bash path (/c/...) to Windows path (C:/...)."""
+    if p and len(p) > 2 and p[0] == "/" and p[2] == "/":
+        drive = p[1].upper()
+        return f"{drive}:/{p[3:]}"
+    return p
+
+
 # ---------------------------
 # Orthorectification helpers
 # ---------------------------
@@ -848,7 +856,9 @@ def main(argv: List[str]) -> int:
 
     # Prefer env var; fallback to frames_dir imported from river.config
     if "FRAMES_DIR" in os.environ:
-        frames_root = Path(os.environ["FRAMES_DIR"]).expanduser()
+        frames_env = _fix_windows_path(os.environ["FRAMES_DIR"])
+        frames_root = Path(frames_env)
+
     else:
         try:
             frames_root = Path(frames_dir)
