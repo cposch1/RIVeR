@@ -46,7 +46,12 @@ export DEP_DIR="$RESULTS_DIR/depth"
 # --------------------------------------------------
 # Python path (project root)
 # --------------------------------------------------
-export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+# Convert only if cygpath exists (i.e. on Git Bash / Windows)
+if command -v cygpath &> /dev/null; then
+    export PYTHONPATH="$(cygpath -w "$PROJECT_DIR")"
+else
+    export PYTHONPATH="$PROJECT_DIR"
+fi
 
 # --------------------------------------------------
 # Create directories safely
