@@ -114,6 +114,14 @@ def check_video_info(video_path: Path) -> dict:
     }
 
 
+def _fix_windows_path(p: str) -> str:
+    # Convert Git Bash /c/... → C:/...
+    if p.startswith("/c/"):
+        return "C:/" + p[3:]
+    return p
+
+
+
 # ---------- Discovery ----------
 
 class DiscoveredItem(Tuple[Path, str, str, str, str]):
@@ -323,6 +331,7 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
     video_dir_env = os.environ.get("VIDEO_DIR")
+    video_dir_env = _fix_windows_path(video_dir_env)
     if not video_dir_env:
         print(
             "ERROR: VIDEO_DIR is not set. Did you run 'source setup.sh' in this shell?",
@@ -330,7 +339,7 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
-    videos_root = Path(video_dir_env).expanduser()
+    videos_root = Path(video_dir_env)
     if not videos_root.exists() or not videos_root.is_dir():
         print(f"ERROR: VIDEO_DIR does not exist or is not a directory: {videos_root}", file=sys.stderr)
         return 2
