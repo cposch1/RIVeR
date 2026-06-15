@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
 
-conda activate velo
+# --------------------------------------------------
+# Activate environment (micromamba or conda)
+# --------------------------------------------------
+if command -v micromamba &> /dev/null; then
+    eval "$(micromamba shell hook --shell bash)"
+    micromamba activate velo
+
+elif command -v conda &> /dev/null; then
+    # Ensure conda works in non-interactive shells (HPC safe)
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate velo
+
+else
+    echo "Error: neither micromamba nor conda found"
+    return 1
+fi
 
 # --------------------------------------------------
-# Find absolute paths (robust, no guessing)
+# Resolve paths RELATIVE to this script only
 # --------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Directory of this script (testing/)
-SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd -W )"
-
-# Project root (one level above testing/)
-PROJECT_DIR="$( cd -- "$SCRIPT_DIR/.." &> /dev/null && pwd -W )"
-
+export SCRIPT_DIR
 export PROJECT_DIR
 
 # --------------------------------------------------
-# Data + results (relative to testing/)
+# Data + results (always relative)
 # --------------------------------------------------
-
-DATA_DIR="$SCRIPT_DIR/data"
-RESULTS_DIR="$SCRIPT_DIR/results"
-
-export DATA_DIR
-export RESULTS_DIR
+export DATA_DIR="$SCRIPT_DIR/data"
+export RESULTS_DIR="$SCRIPT_DIR/results"
 
 export VIDEO_DIR="$DATA_DIR/videos"
 export FRAMES_DIR="$DATA_DIR/frames"
@@ -36,27 +44,24 @@ export DISCH_DIR="$RESULTS_DIR/discharge"
 export DEP_DIR="$RESULTS_DIR/depth"
 
 # --------------------------------------------------
-# Python import (project root contains "river/")
+# Python path (project root)
 # --------------------------------------------------
-
-export PYTHONPATH="$PROJECT_DIR"
+export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 # --------------------------------------------------
-# Ensure directories exist
+# Create directories safely
 # --------------------------------------------------
-
-mkdir -p "$DATA_DIR" "$VIDEO_DIR" "$FRAMES_DIR" \
-         "$GCPS_DIR" "$BATH_DIR" "$RECT_DIR" "$PTS_DIR" \
-         "$RESULTS_DIR" "$PIV_DIR" "$DISCH_DIR" "$DEP_DIR"
+mkdir -p \
+  "$VIDEO_DIR" "$FRAMES_DIR" "$GCPS_DIR" \
+  "$BATH_DIR" "$RECT_DIR" "$PTS_DIR" \
+  "$PIV_DIR" "$DISCH_DIR" "$DEP_DIR"
 
 # --------------------------------------------------
 # Debug output
 # --------------------------------------------------
-
 echo "PROJECT_DIR = $PROJECT_DIR"
 echo "SCRIPT_DIR  = $SCRIPT_DIR"
 echo "DATA_DIR    = $DATA_DIR"
-echo "VIDEO_DIR   = $VIDEO_DIR"
 echo "RESULTS_DIR = $RESULTS_DIR"
 echo "PYTHONPATH  = $PYTHONPATH"
-echo "### Environment is ready ###"
+echo "Environment is ready"
