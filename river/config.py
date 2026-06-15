@@ -28,11 +28,17 @@ import shutil
 # ---- Helpers ---------------------------------------------------------------
 
 def _env_path(var_name: str, fallback: Path) -> Path:
-    """Read path from environment or fallback. Always return resolved Path."""
     val = os.environ.get(var_name)
+
     if val:
-        return Path(val).expanduser().resolve()
-    return fallback.expanduser().resolve()
+        # ✅ Convert Git Bash → Windows
+        if val.startswith("/c/"):
+            val = "C:/" + val[3:]
+
+        # ✅ DO NOT call resolve() here
+        return Path(val).expanduser()
+
+    return fallback.expanduser()
 
 
 # ---- Project root (single source of truth) ---------------------------------

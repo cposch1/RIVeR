@@ -30,13 +30,6 @@ def parse_json_filename(json_path: Path):
 def load_frames_index(frames_root: Path):
     return pd.read_parquet(frames_root / "_frame_paths.parquet")
 
-def _fix_windows_path(p: str) -> str:
-    """Convert Git Bash path (/c/...) → Windows path (C:/...)."""
-    if p and len(p) > 2 and p[0] == "/" and p[2] == "/":
-        drive = p[1].upper()
-        return f"{drive}:/{p[3:]}"
-    return p
-
 
 # ---------------------------
 # Main
@@ -47,13 +40,13 @@ def main():
     parser.add_argument("--json", required=True)
     args = parser.parse_args()
 
-    json_path = Path(_fix_windows_path(args.json))
+    json_path = Path(args.json)
     cam, ref_date, ref_time = parse_json_filename(json_path)
 
     print(f"[INFO] Camera: {cam}")
 
     
-    frames_root = Path(_fix_windows_path(str(frames_dir)))
+    frames_root = frames_dir
     df = load_frames_index(frames_root)
 
     df = df[df["camera"] == cam]
@@ -97,11 +90,8 @@ def main():
                 json.dump(transformation["transformation_matrix"], f, indent=1)
 
             # ---------- LOAD FRAME ----------
-            
-            frame_path_fixed = Path(_fix_windows_path(str(row["frame_path"])))
-            time_dir = frame_path_fixed.parent
-
-            img = mpimg.imread(time_dir / "0000000000.jpg")
+            frame_path = Path(row["frame_path"])
+            img = mpimg.imread(frame_path)
 
             # ---------- LOAD GCPs ----------
             pts = load_gcps_img(cam, date, time_)

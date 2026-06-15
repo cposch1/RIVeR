@@ -29,6 +29,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+from river.config import *
 
 import cv2  # pip install opencv-python
 
@@ -112,14 +113,6 @@ def check_video_info(video_path: Path) -> dict:
         "size_gb": round(size_gb, 2),
         "bitrate_mbps": round(bitrate_mbps, 3) if bitrate_mbps else None,
     }
-
-
-def _fix_windows_path(p: str) -> str:
-    # Convert Git Bash /c/... → C:/...
-    if p.startswith("/c/"):
-        return "C:/" + p[3:]
-    return p
-
 
 
 # ---------- Discovery ----------
@@ -330,8 +323,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    video_dir_env = os.environ.get("VIDEO_DIR")
-    video_dir_env = _fix_windows_path(video_dir_env)
+    video_dir_env = video_dir
     if not video_dir_env:
         print(
             "ERROR: VIDEO_DIR is not set. Did you run 'source setup.sh' in this shell?",

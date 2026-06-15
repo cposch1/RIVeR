@@ -128,12 +128,6 @@ def target_frames_dir_for(video_path: Path, frames_root: Path) -> Path:
     return frames_root / camera / date / clock_start
 
 
-def _fix_windows_path(p: str) -> str:
-    """Convert Git Bash paths (/c/...) to Windows paths (C:/...)."""
-    if p and len(p) > 2 and p[0] == "/" and p[2] == "/":
-        drive = p[1].upper()
-        return f"{drive}:/{p[3:]}"
-    return p
 
 
 # ---------- Metadata whitelist ----------
@@ -299,11 +293,8 @@ def main(argv: List[str]) -> int:
     args = parse_args(argv)
 
     # Resolve env (setup.sh should have set these)
-    video_dir_env = os.environ.get("VIDEO_DIR")
-    frames_dir_env = os.environ.get("FRAMES_DIR")
-    
-    video_dir_env = _fix_windows_path(video_dir_env)
-    frames_dir_env = _fix_windows_path(frames_dir_env)
+    video_dir_env = video_dir
+    frames_dir_env = frames_dir
 
 
     if not video_dir_env:
@@ -313,9 +304,6 @@ def main(argv: List[str]) -> int:
         print("ERROR: FRAMES_DIR is not set. Run 'source setup.sh' in this shell.", file=sys.stderr)
         return 2
 
-    
-    video_dir = Path(video_dir_env)
-    frames_dir = Path(frames_dir_env)
 
 
     if not video_dir.exists() or not video_dir.is_dir():

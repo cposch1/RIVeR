@@ -348,7 +348,7 @@ class CrossSectionApp:
 # Entry point
 # ------------------------------------------------------------
 def main():
-    frames_root = Path(os.environ["FRAMES_DIR"])
+    frames_root = frames_dir
     df_frames = pd.read_parquet(frames_root / "_frame_paths.parquet")
 
     root = tk.Tk()
