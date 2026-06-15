@@ -34,7 +34,7 @@ pt_files = [
 # "xs" = align to XS coverage
 # "pt" = align to PT coverage
 # --------------------------------------------------
-time_reference = "pt"   # or "pt"
+time_reference = "xs"   # or "pt"
 
 # ==================================================
 # LOAD XS DATA
