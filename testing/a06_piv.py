@@ -1,4 +1,31 @@
 #!/usr/bin/env python3
+"""
+RIVeR-ICE — PIV Processing Pipeline
+
+Purpose:
+- Perform Particle Image Velocimetry (PIV) analysis on extracted frames
+- Uses cross-sections and transformations to define ROI
+- Supports test mode (single pair) and full mode (time series)
+
+Inputs:
+- FRAMES_DIR/_frame_paths.parquet
+- Cross-section CSVs: <cam>_xs_coord_<date>_<time>.csv
+- Transform JSONs: <cam>_transform_<date>_<time>.json
+- Bathymetry JSONs: <cam>_xs_<date>_<time>.json
+
+Outputs:
+- Mask debug images
+- PIV test images OR full PIV images
+- PIV JSON results (full mode)
+
+Parameters:
+  --mode            test | full        (default: test)
+  --ia1             interrogation area 1 (default: 128)
+  --ia2             interrogation area 2 (default: 64)
+  --num-stations    fallback only (default: 15)
+  --verbose         enable logging
+"""
+
 from __future__ import annotations
 
 import os
@@ -18,6 +45,17 @@ import cv2
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+
+import sys as _sys
+import logging as _logging
+
+_verbose = ("--verbose" in _sys.argv)
+_logging.basicConfig(level=_logging.INFO if _verbose else _logging.WARNING)
+_logging.getLogger("river.config").setLevel(
+    _logging.INFO if _verbose else _logging.WARNING
+)
+
 
 from river.config import *
 from river.core.define_roi_masks import (
@@ -98,16 +136,55 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--mode", choices=["test", "full"], default="test")
-    parser.add_argument("--ia1", type=int, default=128)
-    parser.add_argument("--ia2", type=int, default=64)
-    parser.add_argument("--num-stations", type=int, default=15)
+    parser.add_argument("--mode", choices=["test", "full"], default="test", help="PIV analysis mode (default: test)")
+    parser.add_argument("--ia1", type=int, default=128, help="Interrogation area 1 size (default: 128)")
+    parser.add_argument("--ia2", type=int, default=64, help="Interrogation area 1 size (default: 64)")
+    parser.add_argument("--num-stations", type=int, default=15, help="By default read from bathymetry json. Can be passed here, default fallback value: 15.")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
     df = load_frames_index()
     df_unique = df.drop_duplicates(["camera", "date_yyyymmdd", "time_hhmmss"])
 
+    # Overwriting decision
+    existing_outputs = False
+    
+    for _, row in df_unique.iterrows():
+    
+        cam = row["camera"]
+        date = row["date_yyyymmdd"]
+        time_ = row["time_hhmmss"]
+    
+        test_img = piv_dir / cam / "piv_test_imgs" / f"{cam}_piv_test_{date}_{time_}.png"
+        full_img = piv_dir / cam / "piv_imgs" / f"{cam}_piv_{date}_{time_}.png"
+        json_out = piv_dir / cam / f"{cam}_piv_{date}_{time_}.json"
+    
+        if test_img.exists() or full_img.exists() or json_out.exists():
+            existing_outputs = True
+            break
+    
+    if existing_outputs:
+        print("Some PIV outputs already exist.")
+    
+        choice = input("Overwrite ALL existing outputs? (y/n): ").strip().lower()
+    
+        if choice == "y":
+            overwrite_mode = True
+            append_mode = False
+        else:
+            choice2 = input("Append (skip existing outputs)? (y/n): ").strip().lower()
+            if choice2 == "y":
+                overwrite_mode = False
+                append_mode = True
+            else:
+                print("Aborted.")
+                return
+    else:
+        overwrite_mode = True
+        append_mode = False
+
+    # Processing
     for _, row in df_unique.iterrows():
 
         cam = row["camera"]
@@ -129,10 +206,23 @@ def main():
             with tf_file.open() as f:
                 T = np.array(json.load(f))
 
+            # Load num_stations from bathymetry JSON if available
+            json_xs = bathy_dir / cam / f"{cam}_xs_{date}_{time_}.json"
+            
+            if json_xs.exists():
+                try:
+                    with json_xs.open() as f:
+                        js = json.load(f)
+                        num_stations = js["section1"].get("num_stations", args.num_stations)
+                except Exception:
+                    num_stations = args.num_stations
+            else:
+                num_stations = args.num_stations
+            
             xsections = build_xsection(
                 cam, date, time_,
                 T,
-                args.num_stations
+                num_stations
             )
 
             frame_dir = frame_dir_from_row(row)
@@ -253,8 +343,11 @@ def main():
                 out_img_dir = piv_dir / cam / "piv_test_imgs"
                 out_img_dir.mkdir(parents=True, exist_ok=True)
 
-                plt.savefig(out_img_dir / f"{cam}_piv_test_{date}_{time_}.png",
-                            dpi=200, bbox_inches="tight", pad_inches=0)
+                out_file = out_img_dir / f"{cam}_piv_test_{date}_{time_}.png"
+
+                if overwrite_mode or (append_mode and not out_file.exists()):
+                    plt.savefig(out_file, dpi=200, bbox_inches="tight", pad_inches=0)
+
                 plt.close()
 
             # -------------------------
@@ -290,15 +383,22 @@ def main():
                 img_dir = piv_dir / cam / "piv_imgs"
                 img_dir.mkdir(parents=True, exist_ok=True)
 
-                plt.savefig(img_dir / f"{cam}_piv_{date}_{time_}.png",
-                            dpi=200, bbox_inches="tight", pad_inches=0)
+                
+                out_file = img_dir / f"{cam}_piv_{date}_{time_}.png"
+                
+                if overwrite_mode or (append_mode and not out_file.exists()):
+                    plt.savefig(out_file, dpi=200, bbox_inches="tight", pad_inches=0)
+
                 plt.close()
 
                 data_dir = piv_dir / cam
                 data_dir.mkdir(parents=True, exist_ok=True)
 
-                with open(data_dir / f"{cam}_piv_{date}_{time_}.json", "w") as f:
-                    json.dump(piv, f, indent=2)
+                json_file = data_dir / f"{cam}_piv_{date}_{time_}.json"
+
+                if overwrite_mode or (append_mode and not json_file.exists()):
+                    with open(json_file, "w") as f:
+                        json.dump(piv, f, indent=2)
 
                 print(f"[SAVED] {cam} {date} {time_}")
 

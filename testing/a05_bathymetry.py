@@ -1,5 +1,41 @@
 #!/usr/bin/env python3
+"""
+RIVeR-ICE — Bathymetry Generator
+
+Purpose:
+- Compute bathymetric profiles from cross-sections and transformations
+- Generate per-scene bathymetry CSV, JSON, and visualization
+
+Inputs:
+- FRAMES_DIR/_frame_paths.parquet
+- Cross-sections: <cam>_xs_coord_<date>_<time>.csv
+- Transform JSONs: <cam>_transform_<date>_<time>.json
+
+Outputs:
+- Bathymetry CSV: <cam>_bath_<date>_<time>.csv
+- Cross-section JSON: <cam>_xs_<date>_<time>.json
+- Visualization PNG: bath_imgs/<cam>_bath_<date>_<time>.png
+
+Parameters:
+  --water-level / --water-lvl   Default: 0.2
+  --num-points / --num-pts      Default: 15
+  --left-st                     Default: 0
+  --alpha                       Default: 1
+  --verbose                     Show river.config logs
+"""
+
 from __future__ import annotations
+
+# ✅ Quiet logging BEFORE import
+import sys as _sys
+import os as _os
+import logging as _logging
+
+_verbose = ("--verbose" in _sys.argv)
+_logging.basicConfig(level=_logging.INFO if _verbose else _logging.WARNING)
+_logging.getLogger("river.config").setLevel(
+    _logging.INFO if _verbose else _logging.WARNING
+)
 
 import argparse
 import json
@@ -24,7 +60,6 @@ def load_frames_index():
 
 
 def find_reference_frame(row):
-    # stays relative as long as frame_path is relative
     return Path(row["frame_path"]).parent / "0000000000.jpg"
 
 
@@ -85,23 +120,66 @@ def get_max_xs_length_per_camera():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--water-level", type=float, required=True)
-    parser.add_argument("--num-points", type=int, default=15)
+
+    parser.add_argument("--water-lvl", type=float, default=0.2, help="Water level/depth (default: 0.2 m)")
+    parser.add_argument("--num-pts", type=int, default=15, help="Number points aalong cross-section (default: 15)")
+    parser.add_argument("--left-st", type=float, default=0, help="Offset of first point from left bank (default: 0 m)")
+    parser.add_argument("--alpha", type=float, default=1, help="Alpha parameter (default: 1)")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
-    lvl = args.water_level
-    npts = args.num_points
+
+    lvl = args.water_lvl
+    npts = args.num_pts
+    left_st = args.left_st
+    alpha = args.alpha
 
     df = load_frames_index()
     df_unique = df.drop_duplicates(
         ["camera", "date_yyyymmdd", "time_hhmmss"]
     )
 
-    # ✅ compute per-camera limits
     max_xs_length_dict = get_max_xs_length_per_camera()
 
     for cam, val in max_xs_length_dict.items():
         print(f"[INFO] {cam} max XS length: {val:.2f} m")
+
+    #Overwrite decision
+    all_existing_outputs = []
+    
+    for _, row in df_unique.iterrows():
+        cam = row["camera"]
+        date = row["date_yyyymmdd"]
+        time_ = row["time_hhmmss"]
+    
+        bath_file = bathy_dir / cam / f"{cam}_bath_{date}_{time_}.csv"
+        json_file = xs_json_path(cam, date, time_)
+        out_img = bathy_dir / cam / "bath_imgs" / f"{cam}_bath_{date}_{time_}.png"
+    
+        if bath_file.exists() or json_file.exists() or out_img.exists():
+            all_existing_outputs.append((cam, date, time_))
+            break  # ✅ one is enough to trigger prompt
+    
+    
+    if all_existing_outputs:
+        print("Some outputs already exist.")
+    
+        choice = input("Overwrite ALL existing outputs? (y/n): ").strip().lower()
+    
+        if choice == "y":
+            overwrite_mode = True
+            append_mode = False
+        else:
+            choice2 = input("Append (skip existing outputs)? (y/n): ").strip().lower()
+            if choice2 == "y":
+                overwrite_mode = False
+                append_mode = True
+            else:
+                print("Aborted: no processing done.")
+                return
+    else:
+        overwrite_mode = True
+        append_mode = False
 
     for _, row in df_unique.iterrows():
         cam = row["camera"]
@@ -116,6 +194,14 @@ def main():
                 continue
 
             print(f"[INFO] {cam} {date} {time_}")
+
+            out_dir = bathy_dir / cam
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            bath_file = out_dir / f"{cam}_bath_{date}_{time_}.csv"
+            json_file = xs_json_path(cam, date, time_)
+            out_img = bathy_dir / cam / "bath_imgs" / f"{cam}_bath_{date}_{time_}.png"
+
 
             # -------------------------
             # Load cross-section
@@ -138,9 +224,6 @@ def main():
             with tf_file.open() as f:
                 T = np.array(json.load(f))
 
-            # -------------------------
-            # Distance
-            # -------------------------
             length = np.sqrt((x_ri - x_le)**2 + (y_ri - y_le)**2)
             xs = np.linspace(0, length, npts)
 
@@ -152,28 +235,15 @@ def main():
 
             bath_points = [(float(x), float(bath(x))) for x in xs]
 
-            # -------------------------
-            # Save bathymetry CSV
-            # -------------------------
-            out_dir = bathy_dir / cam
-            out_dir.mkdir(parents=True, exist_ok=True)
+            if overwrite_mode or (append_mode and not bath_file.exists()):
+                with bath_file.open("w", newline="") as f:
+                    w = csv.writer(f)
+                    w.writerow(["d", "h"])
+                    w.writerows(bath_points)
 
-            bath_file = out_dir / f"{cam}_bath_{date}_{time_}.csv"
-
-            with bath_file.open("w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["d", "h"])
-                w.writerows(bath_points)
-
-            # -------------------------
-            # Pixel coordinates
-            # -------------------------
             left_px = transform_real_world_to_pixel(x_le, y_le, T)
             right_px = transform_real_world_to_pixel(x_ri, y_ri, T)
 
-            # -------------------------
-            # Save JSON
-            # -------------------------
             xsections = {
                 "section1": {
                     "east_l": x_le,
@@ -182,9 +252,9 @@ def main():
                     "north_r": y_ri,
                     "level": lvl,
                     "num_stations": npts,
-                    "alpha": 1,
+                    "alpha": alpha,
                     "bath": str(bath_file),
-                    "left_station": 2.0,
+                    "left_station": left_st,
                     "xl": float(left_px[0]),
                     "yl": float(left_px[1]),
                     "xr": float(right_px[0]),
@@ -193,18 +263,12 @@ def main():
                 }
             }
 
-            json_file = xs_json_path(cam, date, time_)
+            if overwrite_mode or (append_mode and not json_file.exists()):
+                with json_file.open("w") as f:
+                    json.dump(xsections, f, indent=2)
 
-            with json_file.open("w") as f:
-                json.dump(xsections, f, indent=2)
-
-            # -------------------------
-            # Visualization
-            # -------------------------
             frame_path = find_reference_frame(row)
-
             if not frame_path.exists():
-                print(f"[WARN] Missing reference frame: {frame_path}")
                 continue
 
             frame = mpimg.imread(frame_path)
@@ -214,21 +278,18 @@ def main():
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-            # LEFT: image
             ax1.imshow(frame)
             ax1.plot([left_px[0], right_px[0]],
                      [left_px[1], right_px[1]],
                      color='#F5BF61', linewidth=2)
-            ax1.plot(*left_px, 'o', color='#ED6B57', markersize=4)
-            ax1.plot(*right_px, 'o', color='#62C655', markersize=4)
 
-            ax1.set_title("Cross-Section Location")
             ax1.axis("off")
 
-            # RIGHT: bathymetry
+            # Bathymetry plotting
             ax2.plot(stations, stages, 'k-', linewidth=2)
+            
             ax2.axhline(y=lvl, color='#6CD4FF', linestyle='--')
-
+            
             ax2.fill_between(
                 stations,
                 stages,
@@ -237,10 +298,11 @@ def main():
                 color='#6CD4FF',
                 alpha=0.3
             )
-
+            
+            # Scaling
             max_len = max_xs_length_dict.get(cam, length)
             margin = 0.05 * max_len
-
+            
             ax2.set_xlim(-margin, max_len + margin)
             ax2.set_xlabel("Distance from left bank (m)")
             ax2.set_ylabel("Elevation (m)")
@@ -249,16 +311,14 @@ def main():
 
             fig.tight_layout()
 
-            # -------------------------
-            # Save image
-            # -------------------------
-            out_dir_img = bathy_dir / cam / "bath_imgs"
-            out_dir_img.mkdir(parents=True, exist_ok=True)
+            if overwrite_mode or (append_mode and not out_img.exists()):
+                out_img.parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(out_img, dpi=300, bbox_inches="tight", pad_inches=0)
 
-            out_img = out_dir_img / f"{cam}_bath_{date}_{time_}.png"
-
-            fig.savefig(out_img, dpi=300, bbox_inches="tight", pad_inches=0)
             plt.close(fig)
+
+            if not overwrite_mode and append_mode:
+                print("[INFO] Append mode: skipping existing outputs")
 
         except Exception as e:
             print(f"[FAIL] {cam} {date} {time_}: {e}")

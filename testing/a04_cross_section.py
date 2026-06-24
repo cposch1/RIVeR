@@ -137,7 +137,7 @@ class CrossSectionApp:
 
         self._build_ui()
 
-        # ✅ HANDLE WINDOW CLOSE PROPERLY
+        # HANDLE WINDOW CLOSE PROPERLY
         self.master.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._populate_cameras()
@@ -263,7 +263,7 @@ class CrossSectionApp:
 
         self.ax.clear()
         self.ax.imshow(trans["transformed_img"], extent=trans["extent"])
-        # ✅ Apply custom limits if provided
+        # Custom axis limits if porvided
         if self.custom_xlim is not None:
             self.ax.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
         else:
@@ -277,7 +277,7 @@ class CrossSectionApp:
         self.ax.set_aspect("equal")
 
 
-        # ✅ ADD GRID HERE
+        # Grid
         xmin, xmax = self.ax.get_xlim()
         ymin, ymax = self.ax.get_ylim()
         
@@ -321,6 +321,20 @@ class CrossSectionApp:
         p = xs_coord_path(self.selected_camera, self.selected_date, self.selected_time)
         p.parent.mkdir(parents=True, exist_ok=True)
 
+        
+        # Check overwrite
+        if p.exists():
+            choice = messagebox.askyesno(
+                "Overwrite?",
+                f"Cross-section already exists for:\n"
+                f"{self.selected_camera} {self.selected_date} {self.selected_time}\n\n"
+                f"Do you want to overwrite it?"
+            )
+            if not choice:
+                print("[Info] Operation cancelled (no overwrite).")
+                return
+
+
         with p.open("w", newline="") as f:
             writer = csv.writer(f)
             for x, y in self.points_rw:
@@ -333,7 +347,7 @@ class CrossSectionApp:
 
         self._on_date()
 
-    # ✅ CLEAN EXIT HANDLER
+    # CLEAN EXIT HANDLER
     def _on_close(self):
         print("[INFO] Closing GUI...")
         try:
@@ -354,7 +368,7 @@ def main():
     root = tk.Tk()
     app = CrossSectionApp(root, df_frames, xlim=args.xlim, ylim=args.ylim)
 
-    # ✅ ENABLE CTRL+C
+    # ENABLE CTRL+C
     def handle_sigint(sig, frame):
         print("\n[INFO] Ctrl+C detected — exiting")
         plt.close('all')
@@ -362,7 +376,7 @@ def main():
 
     signal.signal(signal.SIGINT, handle_sigint)
 
-    # ✅ keep loop responsive to signals
+    # keep loop responsive to signals
     def _poll():
         root.after(100, _poll)
 

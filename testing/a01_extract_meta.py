@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-extract_meta.py — scan VIDEO_DIR (from environment) and create per-camera metadata CSVs.
+a01_extract_meta.py — scan VIDEO_DIR (from environment) and create per-camera metadata CSVs.
 
 Environment:
   - Requires VIDEO_DIR to be exported (e.g., via:  source setup.sh)
@@ -27,11 +27,14 @@ import csv
 import os
 import re
 import sys
+import logging
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+
+logging.getLogger("river.config").setLevel(logging.ERROR)
 from river.config import *
 
-import cv2  # pip install opencv-python
+import cv2
 
 
 # ---------- Config ----------
@@ -149,10 +152,10 @@ def discover_videos(
 
         total_video_files += 1
 
-        session_dir = path.parent           # 20250723-000000-235900
-        camera_dir = path.parent.parent     # ilhh
+        session_dir = path.parent
+        camera_dir = path.parent.parent
         
-        m = STEM_RE.match(path.stem)        # ✅ match FILENAME
+        m = STEM_RE.match(path.stem)
         if not m:
             continue
         
@@ -165,7 +168,7 @@ def discover_videos(
         cameras.add(camera)
 
         if camera != camera_dir.name:
-            continue  # or log a warning
+            continue
 
     return items, total_video_files, cameras
 
@@ -199,7 +202,6 @@ def process_items_and_write_csvs(
             }
             rows_per_camera.setdefault(camera, []).append(row)
         except Exception as e:
-            # Populate error row with safe fallbacks
             try:
                 fallback_size_gb = round(path.stat().st_size / (1024 ** 3), 2)
             except Exception:
@@ -218,7 +220,6 @@ def process_items_and_write_csvs(
                 "error_message": str(e),
             })
 
-    # Write meta CSVs
     camera_to_csv: Dict[str, Path] = {}
     for camera, rows in rows_per_camera.items():
         rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
@@ -248,7 +249,6 @@ def process_items_and_write_csvs(
                 writer.writeheader()
             writer.writerows(rows)
 
-    # Write error CSVs
     err_to_csv: Dict[str, Path] = {}
     for camera, rows in errors_per_camera.items():
         rows.sort(key=lambda r: (r["date_yyyymmdd"], r["time_hhmmss"]))
@@ -295,105 +295,76 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         prog="extract_meta",
         description="Generate per-camera metadata/error CSVs from VIDEO_DIR (exported in environment).",
     )
-    p.add_argument(
-        "--camera",
-        help="Only process a single camera (name must match the filename prefix before the first '_').",
-    )
-    p.add_argument(
-        "--ext",
-        nargs="+",
-        default=list(DEFAULT_EXTS),
-        help="File extensions to include (case-insensitive). Example: --ext .mp4 .mkv",
-    )
+    p.add_argument("--cam")
+    p.add_argument("--ext", nargs="+", default=list(DEFAULT_EXTS))
     mode = p.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--overwrite",
-        action="store_true",
-        default=True,
-        help="Overwrite existing CSVs (default).",
-    )
-    mode.add_argument(
-        "--append",
-        action="store_true",
-        help="Append to existing CSVs instead of overwriting.",
-    )
+    mode.add_argument("--overwrite", action="store_true", default=True)
+    mode.add_argument("--append", action="store_true")
+    p.add_argument("--verbose", action="store_true")  # ✅ ADDED
     return p.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    video_dir_env = video_dir
-    if not video_dir_env:
-        print(
-            "ERROR: VIDEO_DIR is not set. Did you run 'source setup.sh' in this shell?",
-            file=sys.stderr,
-        )
-        return 2
+    # Suppress config logging unless verbose
+    if not args.verbose:
+        logging.getLogger("river.config").setLevel(logging.ERROR)
 
+    video_dir_env = video_dir
     videos_root = Path(video_dir_env)
-    if not videos_root.exists() or not videos_root.is_dir():
-        print(f"ERROR: VIDEO_DIR does not exist or is not a directory: {videos_root}", file=sys.stderr)
-        return 2
 
     overwrite = not args.append
-    exts = args.ext
+    items, total_video_files, cameras = discover_videos(videos_root, args.ext)
 
-    # Pre-scan for validation and camera discovery
-    items, total_video_files, cameras = discover_videos(videos_root, exts)
-
-    if total_video_files == 0:
-        print(
-            f"ERROR: No video files with extensions {exts} found under VIDEO_DIR: {videos_root}\n"
-            f"       Make sure your videos are in that directory.",
-            file=sys.stderr,
-        )
-        return 3
-
-    # If a camera filter is requested, verify it exists among matched stems
-    if args.camera:
-        if args.camera not in cameras:
-            # If there are video files but none match the expected pattern, mention that
-            pattern_hint = ""
-            if len(items) == 0 and total_video_files > 0:
-                pattern_hint = (
-                    "\nNote: Found video files, but none match the expected naming pattern:\n"
-                    "      <camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>.<ext>\n"
-                )
-
+    # Camera filter
+    if args.cam:
+        if args.cam not in cameras:
             cam_list = ", ".join(sorted(cameras)) if cameras else "(none discovered)"
             print(
-                f"ERROR: Camera '{args.camera}' was not found in VIDEO_DIR.\n"
-                f"       Available cameras from matched filenames: {cam_list}{pattern_hint}",
+                f"ERROR: Camera '{args.cam}' was not found in VIDEO_DIR.\n"
+                f"       Available cameras from matched filenames: {cam_list}",
                 file=sys.stderr,
             )
             return 4
-
-        # Filter items to only that camera
-        items = [t for t in items if t[1] == args.camera]
-
+    
+        # filter items
+        items = [t for t in items if t[1] == args.cam]
+    
         if not items:
             print(
-                f"ERROR: No videos matched for camera '{args.camera}' after filtering.",
+                f"ERROR: No videos matched for camera '{args.cam}' after filtering.",
                 file=sys.stderr,
             )
             return 5
 
-    # If there are matched items but zero (i.e., all videos are off-pattern), surface that
-    if not items:
-        print(
-            "ERROR: No files matched the expected naming pattern:\n"
-            "       <camera>_<YYYYMMDD>-<HHMMSS>-<HHMMSS>.<ext>\n"
-            f"       under VIDEO_DIR: {videos_root}",
-            file=sys.stderr,
-        )
-        return 6
+    # Overwrite function
+    if overwrite:
+        existing_outputs = []
+        cams_to_check = [args.cam] if args.cam else cameras
+        for cam in cams_to_check:
+            meta_path = videos_root / cam / f"_{cam}_meta.csv"
+            err_path = videos_root / cam / f"_{cam}_error_log.csv"
 
-    # Do the processing and write CSVs
+            if meta_path.exists():
+                existing_outputs.append(meta_path)
+            if err_path.exists():
+                existing_outputs.append(err_path)
+
+        if existing_outputs:
+            print("The following files already exist and would be overwritten:")
+            for p in existing_outputs:
+                print(f"  {p}")
+
+            choice = input("Overwrite? (y/n): ").strip().lower()
+            if choice != "y":
+                print("Aborted: no files were written.")
+                return 0
+
     camera_csvs, err_csvs = process_items_and_write_csvs(
-        videos_root=videos_root,
-        items=items,
-        overwrite=overwrite,
+        videos_root,
+        items,
+        overwrite,
     )
 
     print("Following metadata files were created/updated:")

@@ -38,19 +38,15 @@ Notes:
 
 from __future__ import annotations
 
-# ---- Quiet-by-default logging setup (must be before importing river.config) ----
+# ---- Import ----
 import os as _os
 import sys as _sys
 import logging as _logging
 
-# Enable INFO logs only when --verbose is present on the command line
-# or EXTRACT_FRAMES_VERBOSE=1 is set in the environment.
+
 _verbose = ("--verbose" in _sys.argv) or (_os.environ.get("EXTRACT_FRAMES_VERBOSE") == "1")
 _logging.basicConfig(level=_logging.INFO if _verbose else _logging.WARNING)
 _logging.getLogger("river.config").setLevel(_logging.INFO if _verbose else _logging.WARNING)
-# -------------------------------------------------------------------------------
-
-# ✅ Import your processing logic exactly as in the notebook
 from river.config import *  # noqa: F401,F403  (video_to_frames, etc.)
 
 import argparse
@@ -266,13 +262,13 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--overwrite",
         action="store_true",
         dest="overwrite",
-        help="Delete frame folder before extraction (default: False)."
+        help="Delete frame folder before extraction."
     )
     ow.add_argument(
         "--no-overwrite",
         action="store_false",
         dest="overwrite",
-        help="Do not overwrite existing frames (default behavior)."
+        help="Append frames to existing ones."
     )
     p.set_defaults(overwrite=False)
 
@@ -291,6 +287,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str]) -> int:
     args = parse_args(argv)
+    flag_overwrite_used = ("--overwrite" in argv) or ("--no-overwrite" in argv)
 
     # Resolve env (setup.sh should have set these)
     video_dir_env = video_dir
@@ -355,6 +352,43 @@ def main(argv: List[str]) -> int:
         )
         return 5
 
+    # Existing frame query
+    existing_frame_dirs = set()
+
+    for vp in videos:
+        try:
+            camera, date, clock_start_raw, _ = parse_video_name(vp)
+            clock_start = _normalize_clock(clock_start_raw)
+        except Exception:
+            continue
+
+        if allowed_triples and (camera, date, clock_start) not in allowed_triples:
+            continue
+        if not passes_filters(camera, date, clock_start, camera_filter, start_date, end_date, start_time, end_time):
+            continue
+
+        dest = target_frames_dir_for(vp, frames_dir)
+        if dest.exists():
+            existing_frame_dirs.add(dest)
+
+    if existing_frame_dirs and not flag_overwrite_used:
+        print("Frame folders already exist for the selected videos:")
+        for d in sorted(existing_frame_dirs):
+            print(f"  {d}")
+
+        choice = input("Overwrite them completely? (y/n): ").strip().lower()
+
+        if choice == "y":
+            args.overwrite = True
+        else:
+            choice2 = input("Append frames without overwriting existing ones? (y/n): ").strip().lower()
+            if choice2 == "y":
+                args.overwrite = False
+            else:
+                print("Aborted: no processing done.")
+                return 0
+    
+    
     # Process
     processed = 0
     skipped = 0
@@ -378,9 +412,7 @@ def main(argv: List[str]) -> int:
 
         dest = target_frames_dir_for(vp, frames_dir)
 
-        # Overwrite behaviour:
-        # - If --overwrite: delete the folder then recreate it.
-        # - If --no-overwrite (default): keep folder and skip already-written frames (we pass overwrite=False).
+        # Overwrite function
         if args.overwrite:
             if dest.exists():
                 shutil.rmtree(dest)
@@ -390,7 +422,7 @@ def main(argv: List[str]) -> int:
             dest.mkdir(parents=True, exist_ok=True)
             per_file_overwrite = False  # keep existing files; do not rewrite
 
-        # Call your RIVeR function with the SAME signature you used in the notebook
+        # Call RIVeR function
         extract_config = {
             "video_path": vp,
             "frames_dir": dest,
@@ -416,7 +448,7 @@ def main(argv: List[str]) -> int:
         print("NOTE: No metadata entries were found, and no videos were processed. "
               "Run your metadata extraction to create _<camera>_meta.csv files.", file=sys.stderr)
 
-    # ---------- Build / update frames index (always, even with --no-overwrite) ----------
+    # ---------- Build / update frames index ----------
 
     def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
         """

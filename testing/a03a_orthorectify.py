@@ -535,6 +535,41 @@ class OrthoApp:
         date = self.selected_date
         time_ = self.selected_time
 
+        
+        # Check if transformation already exists
+        transf_file = transform_json_path(cam, date, time_)
+        
+        if transf_file.exists():
+            choice = messagebox.askyesno(
+                "Overwrite?",
+                f"Transformation already exists for:\n"
+                f"{cam} {date} {time_}\n\n"
+                f"Do you want to overwrite it?"
+            )
+            if not choice:
+                print("[Info] Operation cancelled by user (no overwrite).")
+                return
+            else:
+                # ✅ HARD overwrite: remove all existing outputs first
+        
+                try:
+                    # JSON
+                    transf_file.unlink(missing_ok=True)
+        
+                    # Orthorectified PNG (with overlays)
+                    ortho_dir = rect_dir / cam / "orthorectification_imgs"
+                    ortho_img = ortho_dir / f"{cam}_orthorect_{date}_{time_}.png"
+                    ortho_img.unlink(missing_ok=True)
+        
+                    # Clean ortho image
+                    ortho_clean_dir = rect_dir / cam / "ortho_imgs"
+                    ortho_clean = ortho_clean_dir / f"{cam}_orthoimg_{date}_{time_}.png"
+                    ortho_clean.unlink(missing_ok=True)
+        
+                except Exception as e:
+                    print(f"[WARN] Failed to clean previous outputs: {e}")
+
+
         # ---- Save GCP image coordinates
         try:
             gcps_img_file = gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.csv"
@@ -592,7 +627,7 @@ class OrthoApp:
         self._populate_dates()
         self._populate_cameras()
 
-        # ✅ Auto-reset points after Save & Transform to avoid mismatches
+        # Auto-reset points after Save & Transform to avoid mismatches
         self._clear_points_state(due_to_selection_change=False)
         self.status.set("Saved & transformed successfully. Points reset.")
 
@@ -623,7 +658,7 @@ class OrthoApp:
         ax1.axis('off')
         ax1.set_title('Original Image')
 
-        # Draw lines in original (✅ removed accidental extra blue line)
+        # Draw lines in original
         ax1.plot([x1_pix, x2_pix], [y1_pix, y2_pix], color='#6CD4FF', linewidth=2)
         ax1.plot([x2_pix, x3_pix], [y2_pix, y3_pix], color='#62C655', linewidth=2)
         ax1.plot([x3_pix, x4_pix], [y3_pix, y4_pix], color='#ED6B57', linewidth=2)
@@ -644,10 +679,10 @@ class OrthoApp:
 
             p = global_extent_path(cam)
 
-            # ✅ Make sure directory always exists BEFORE any write attempt
+            # Make sure directory always exists BEFORE any write attempt
             p.parent.mkdir(parents=True, exist_ok=True)
             
-            # ✅ Case 1: manual extent (from CLI)
+            # Case 1: manual extent (from CLI)
             if self.custom_xlim is not None and self.custom_ylim is not None:
                 self.global_extent = (
                     self.custom_xlim[0],
@@ -656,11 +691,11 @@ class OrthoApp:
                     self.custom_ylim[1]
                 )
             
-            # ✅ Case 2: compute from first transformation
+            # Case 2: compute from first transformation
             elif self.global_extent is None:
                 self.global_extent = tuple(transformation['extent'])
             
-            # ✅ Save ONCE (prevents overwriting)
+            # Save ONCE (prevents overwriting)
             if not p.exists():
                 with p.open("w") as f:
                     json.dump(self.global_extent, f, indent=2)
@@ -721,7 +756,7 @@ class OrthoApp:
             x3_rw, y3_rw = rw_points[2]
             x4_rw, y4_rw = rw_points[3]
 
-            # Lines (✅ 2–4 diagonal fixed with correct coords and color)
+            # Lines
             ax2.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#6CD4FF', linewidth=2)
             ax2.plot([x2_rw, x3_rw], [y2_rw, y3_rw], color='#62C655', linewidth=2)
             ax2.plot([x3_rw, x4_rw], [y3_rw, y4_rw], color='#ED6B57', linewidth=2)
@@ -753,7 +788,7 @@ class OrthoApp:
         print(f"[Saved] Orthorectified PNG: {ortho_img}")
 
         # Show the figure (as requested)
-        plt.show()
+        plt.show(block=False)
 
         # ---- Save orthorectified image only (no overlays) ----
         fig_clean, ax_clean = plt.subplots(figsize=(6, 4))

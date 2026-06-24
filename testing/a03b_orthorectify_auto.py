@@ -1,5 +1,51 @@
 #!/usr/bin/env python3
+"""
+orthorectify_auto.py — Batch orthorectification using a reference transformation
+
+Description:
+  - Processes all scenes for a given camera using a reference transformation JSON.
+  - Reuses reference GCP image coordinates for all scenes.
+  - Runs orthorectification and saves:
+      * Full annotated orthorectified images
+      * Clean orthorectified images
+      * Transformation JSONs per scene
+
+Inputs:
+  --json PATH
+      Path to a reference transformation JSON file:
+      <camera>_transform_<YYYYMMDD>_<HHMMSS>.json
+
+Requirements:
+  - FRAMES_DIR/_frame_paths.parquet must exist
+  - GCP real-world coordinates must exist
+  - Reference GCP image coordinates must exist
+
+Outputs:
+  - Orthorectified images:
+      rect_dir/<camera>/orthorectification_imgs_auto/
+      rect_dir/<camera>/ortho_imgs_auto/
+  - Transformation JSONs:
+      rect_dir/<camera>/<camera>_transform_<date>_<time>.json
+
+Behavior:
+  - Quiet by default (suppresses river.config logs)
+  - Use --verbose to enable detailed logging
+
+Example:
+  python orthorectify_auto.py --json path/to/cam_transform_20250707_120000.json
+  python orthorectify_auto.py --json ... --verbose
+"""
+
 from __future__ import annotations
+
+import sys as _sys
+import os as _os
+import logging as _logging
+
+_verbose = ("--verbose" in _sys.argv) or (_os.environ.get("ORTHO_AUTO_VERBOSE") == "1")
+_logging.basicConfig(level=_logging.INFO if _verbose else _logging.WARNING)
+_logging.getLogger("river.config").setLevel(_logging.INFO if _verbose else _logging.WARNING)
+
 
 import argparse
 import json

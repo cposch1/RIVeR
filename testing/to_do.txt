@@ -1,11 +1,6 @@
-to consider:
-
-
-
 TO DO:
 
 think about using cross-section selection only once a day
-make all scripts able to run with relative paths
 make all scripts run on the server
 
 fixes for piv needed:
@@ -13,8 +8,3 @@ fixes for piv needed:
 - issues with negative aois?
 - issues with too small aois
 - all-NaN values issue
-
-additions to last scripts
-- overwrite function
-- flag passing (default values)
-- verbose option and date subsetting
