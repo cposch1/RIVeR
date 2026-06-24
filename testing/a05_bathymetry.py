@@ -20,10 +20,11 @@ from river.core.coordinate_transform import transform_real_world_to_pixel
 # ---------------------------
 
 def load_frames_index():
-    return pd.read_parquet(Path(frames_dir) / "_frame_paths.parquet")
+    return pd.read_parquet(frames_dir / "_frame_paths.parquet")
 
 
 def find_reference_frame(row):
+    # stays relative as long as frame_path is relative
     return Path(row["frame_path"]).parent / "0000000000.jpg"
 
 
@@ -35,16 +36,18 @@ def transform_path(cam, date, time_):
     return rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
 
 
-# ✅ NEW: JSON path
 def xs_json_path(cam, date, time_):
     return bathy_dir / cam / f"{cam}_xs_{date}_{time_}.json"
 
 
-# ✅ NEW: per-camera max XS length
+# ---------------------------
+# Per-camera XS length
+# ---------------------------
+
 def get_max_xs_length_per_camera():
     max_len_dict = {}
 
-    for cam_dir in (bathy_dir).glob("*"):
+    for cam_dir in bathy_dir.glob("*"):
         if not cam_dir.is_dir():
             continue
 
@@ -66,8 +69,7 @@ def get_max_xs_length_per_camera():
                 (x1, y1), (x2, y2) = pts
                 length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-                if length > max_len:
-                    max_len = length
+                max_len = max(max_len, length)
 
             except Exception:
                 continue
@@ -140,15 +142,13 @@ def main():
             # Distance
             # -------------------------
             length = np.sqrt((x_ri - x_le)**2 + (y_ri - y_le)**2)
-
             xs = np.linspace(0, length, npts)
 
-            xL = 0
-            xR = length
+            xL, xR = 0, length
             xM = length / 2
 
             def bath(x):
-                return lvl * (x - xM)**2 / ((xL - xM)*(xR - xM)) * (-1)
+                return lvl * (x - xM)**2 / ((xL - xM) * (xR - xM)) * (-1)
 
             bath_points = [(float(x), float(bath(x))) for x in xs]
 
@@ -166,13 +166,13 @@ def main():
                 w.writerows(bath_points)
 
             # -------------------------
-            # ✅ COMPUTE PIXEL COORDS
+            # Pixel coordinates
             # -------------------------
             left_px = transform_real_world_to_pixel(x_le, y_le, T)
             right_px = transform_real_world_to_pixel(x_ri, y_ri, T)
 
             # -------------------------
-            # ✅ CREATE JSON
+            # Save JSON
             # -------------------------
             xsections = {
                 "section1": {
@@ -201,26 +201,31 @@ def main():
             # -------------------------
             # Visualization
             # -------------------------
-            frame = mpimg.imread(find_reference_frame(row))
+            frame_path = find_reference_frame(row)
+
+            if not frame_path.exists():
+                print(f"[WARN] Missing reference frame: {frame_path}")
+                continue
+
+            frame = mpimg.imread(frame_path)
 
             stations = np.array([p[0] for p in bath_points])
-            stages = np.array([p[1] for p in bath_points])
-            stages = np.round(stages, 6)
+            stages = np.round([p[1] for p in bath_points], 6)
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-            # ---- LEFT: image ----
+            # LEFT: image
             ax1.imshow(frame)
             ax1.plot([left_px[0], right_px[0]],
                      [left_px[1], right_px[1]],
                      color='#F5BF61', linewidth=2)
-            ax1.plot(left_px[0], left_px[1], 'o', color='#ED6B57', markersize=4)
-            ax1.plot(right_px[0], right_px[1], 'o', color='#62C655', markersize=4)
+            ax1.plot(*left_px, 'o', color='#ED6B57', markersize=4)
+            ax1.plot(*right_px, 'o', color='#62C655', markersize=4)
 
             ax1.set_title("Cross-Section Location")
             ax1.axis("off")
 
-            # ---- RIGHT: bathymetry ----
+            # RIGHT: bathymetry
             ax2.plot(stations, stages, 'k-', linewidth=2)
             ax2.axhline(y=lvl, color='#6CD4FF', linestyle='--')
 
@@ -233,10 +238,10 @@ def main():
                 alpha=0.3
             )
 
-            max_xs_length = max_xs_length_dict.get(cam, length)
-            margin = 0.05 * max_xs_length
+            max_len = max_xs_length_dict.get(cam, length)
+            margin = 0.05 * max_len
 
-            ax2.set_xlim(-margin, max_xs_length + margin)
+            ax2.set_xlim(-margin, max_len + margin)
             ax2.set_xlabel("Distance from left bank (m)")
             ax2.set_ylabel("Elevation (m)")
             ax2.set_title("Bathymetry Profile")

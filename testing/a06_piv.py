@@ -33,15 +33,21 @@ from river.core.coordinate_transform import transform_real_world_to_pixel
 # ---------------------------
 
 def load_frames_index():
-    return pd.read_parquet(Path(frames_dir) / "_frame_paths.parquet")
+    return pd.read_parquet(frames_dir / "_frame_paths.parquet")
 
 
 def frame_dir_from_row(row):
-    return Path(row["frame_path"]).parent
+    p = Path(row["frame_path"])
+    if not p.is_absolute():
+        p = frames_dir / p
+    return p.parent
 
 
 def ref_frame_path(row):
-    return Path(row["frame_path"]).parent / "0000000000.jpg"
+    p = Path(row["frame_path"])
+    if not p.is_absolute():
+        p = frames_dir / p
+    return p.parent / "0000000000.jpg"
 
 
 def xs_coord_path(cam, date, time_):
@@ -114,7 +120,7 @@ def main():
         if not xs_file.exists() or not tf_file.exists():
             continue
 
-        print(f"[PIV-{args.mode}] {cam} {time_}")
+        print(f"[INFO] Running {cam} {date} {time_}")
 
         try:
             # -------------------------
@@ -131,9 +137,20 @@ def main():
 
             frame_dir = frame_dir_from_row(row)
 
-            # reference frame
+            # -------------------------
+            # Load reference frame
+            # -------------------------
             frame_path = ref_frame_path(row)
+
+            if not frame_path.exists():
+                print(f"[WARN] Missing frame: {frame_path}")
+                continue
+
             frame = cv2.imread(str(frame_path))
+            if frame is None:
+                print(f"[WARN] Failed to load image: {frame_path}")
+                continue
+
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             # -------------------------
@@ -154,6 +171,15 @@ def main():
 
             if np.sum(mask) < 2000:
                 print("[WARN] mask too small")
+                continue
+
+            # -------------------------
+            # FRAME CHECK (NOW BOTH MODES)
+            # -------------------------
+            frames = sorted(frame_dir.glob("*.jpg"))
+
+            if len(frames) < 2:
+                print("[WARN] Not enough frames for PIV")
                 continue
 
             # -------------------------
@@ -192,15 +218,11 @@ def main():
             plt.close()
 
             # -------------------------
-            # TEST MODE (EXACT NOTEBOOK)
+            # TEST MODE
             # -------------------------
             if args.mode == "test":
 
-                frames = sorted(frame_dir.glob("*.jpg"))
-
-                img1 = frames[0]
-                img2 = frames[1]
-
+                img1, img2 = frames[0], frames[1]
 
                 piv = run_test(
                     image_1=img1,
@@ -211,46 +233,46 @@ def main():
                     interrogation_area_2=args.ia2
                 )
 
-                # ✅ NOTEBOOK IDENTICAL PLOTTING
                 frame1 = cv2.imread(str(img1))
                 frame1_rgb = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
 
                 plt.figure(figsize=(12, 8))
                 plt.imshow(frame1_rgb)
 
-                # ✅ CRUCIAL: reshape
                 x = np.array(piv['x']).reshape(piv['shape'])
                 y = np.array(piv['y']).reshape(piv['shape'])
                 u = np.array(piv['u']).reshape(piv['shape'])
                 v = np.array(piv['v']).reshape(piv['shape'])
 
                 plt.imshow(overlay, alpha=overlay_mask, cmap='gray')
-
                 plt.quiver(x, y, u, -v, color='blue')
 
-                plt.title('PIV Test Results')
                 plt.axis('off')
                 plt.tight_layout()
 
-                out_img = piv_dir / cam / "piv_test_imgs"
-                out_img.mkdir(parents=True, exist_ok=True)
+                out_img_dir = piv_dir / cam / "piv_test_imgs"
+                out_img_dir.mkdir(parents=True, exist_ok=True)
 
-                plt.savefig(out_img / f"{cam}_piv_test_{date}_{time_}.png",
+                plt.savefig(out_img_dir / f"{cam}_piv_test_{date}_{time_}.png",
                             dpi=200, bbox_inches="tight", pad_inches=0)
                 plt.close()
 
             # -------------------------
-            # FULL MODE
+            # FULL MODE (NOW SAFE)
             # -------------------------
             else:
 
-                piv = run_analyze_all(
-                    frame_dir,
-                    mask=mask,
-                    bbox=bbox,
-                    interrogation_area_1=args.ia1,
-                    interrogation_area_2=args.ia2
-                )
+                try:
+                    piv = run_analyze_all(
+                        frame_dir,
+                        mask=mask,
+                        bbox=bbox,
+                        interrogation_area_1=args.ia1,
+                        interrogation_area_2=args.ia2
+                    )
+                except Exception as e:
+                    print("[WARN] PIV full mode failed — skipping")
+                    continue
 
                 x = np.array(piv['x'])
                 y = np.array(piv['y'])
@@ -272,7 +294,6 @@ def main():
                             dpi=200, bbox_inches="tight", pad_inches=0)
                 plt.close()
 
-                # save data
                 data_dir = piv_dir / cam
                 data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -284,7 +305,8 @@ def main():
         except Exception:
             import traceback
             traceback.print_exc()
-            break
+            print(f"[WARN] Skipping {cam} {date} {time_}")
+            continue
 
 
 if __name__ == "__main__":

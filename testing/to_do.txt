@@ -10,7 +10,8 @@ make all scripts run on the server
 
 fixes for piv needed:
 - output not confident
-- issues with negative masks/rois
+- issues with negative aois?
+- issues with too small aois
 - all-NaN values issue
 
 additions to last scripts
