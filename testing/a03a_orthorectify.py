@@ -42,9 +42,7 @@ import logging as _logging
 _verbose = ("--verbose" in _sys.argv) or (_os.environ.get("ORTHO_GUI_VERBOSE") == "1")
 _logging.basicConfig(level=_logging.INFO if _verbose else _logging.WARNING)
 _logging.getLogger("river.config").setLevel(_logging.INFO if _verbose else _logging.WARNING)
-# --------------------------------------------------------------------------
 
-# ✅ Bring in your RIVeR config & functions (unchanged behavior)
 from river.config import *  # noqa: F401,F403
 
 import argparse
@@ -63,7 +61,7 @@ matplotlib.use("TkAgg")  # embed in Tkinter
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.patches import Rectangle
 
 import tkinter as tk
@@ -288,8 +286,16 @@ class OrthoApp:
         self.fig: Figure = Figure(figsize=(9, 6), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.ax.axis("off")
+        
+        # Canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.master)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
+        
+        # toolbar
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.master)
+        self.toolbar.update()
+        self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
     # ---- Population & coloring ----
 
@@ -468,6 +474,7 @@ class OrthoApp:
         self.status.set(f"Loaded: {self.selected_camera} {self.selected_date} {self.selected_time}. Click 4 points in order.")
         self.btn_reset["state"] = tk.NORMAL
         self.btn_save_transform["state"] = tk.DISABLED  # enable after 4 points
+        self.toolbar.zoom()
 
     def _draw_image(self):
         self.ax.clear()
@@ -498,6 +505,8 @@ class OrthoApp:
         self._clear_points_state(due_to_selection_change=False)
 
     def _on_click(self, event):
+        if hasattr(self, "toolbar") and self.toolbar.mode != "":
+            return
         if self.current_img is None:
             return
         if event.xdata is None or event.ydata is None:
@@ -783,7 +792,11 @@ class OrthoApp:
         ortho_dir.mkdir(parents=True, exist_ok=True)
         
         ortho_img = ortho_dir / f"{cam}_orthorect_{date}_{time_}.png"
-        fig.savefig(str(ortho_img))
+        fig.savefig(str(ortho_img),
+                    dpi=300,
+                    bbox_inches="tight",
+                    pad_inches=0,
+                    transparent=True)
 
         print(f"[Saved] Orthorectified PNG: {ortho_img}")
 
@@ -818,7 +831,11 @@ class OrthoApp:
         
         ortho_clean = ortho_clean_dir / f"{cam}_orthoimg_{date}_{time_}.png"
 
-        fig_clean.savefig(str(ortho_clean), bbox_inches="tight", pad_inches=0)
+        fig_clean.savefig(str(ortho_clean),
+                    dpi=300,
+                    bbox_inches="tight",
+                    pad_inches=0,
+                    transparent=True)
     
         plt.close(fig_clean)  # prevent extra window
     
