@@ -221,10 +221,6 @@ class OrthoApp:
         self.current_frame_path: Optional[Path] = None
         self._transformation = None
 
-        self.base_points: Optional[List[Tuple[int, int]]] = None
-        self.point_offsets = [0, 0, 0, 0]
-        self.sliders = []
-
         # Build UI
         self._build_ui()
         self._populate_cameras()
@@ -285,32 +281,6 @@ class OrthoApp:
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
         ttk.Label(self.master, textvariable=self.status).pack(side=tk.TOP, anchor="w", padx=8)
-
-        # ---- Individual Y sliders ----
-        slider_frame = ttk.LabelFrame(self.master, text="Adjust GCPs (Vertical)")
-        slider_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
-        
-        self.sliders = []
-        
-        for i in range(4):
-            row = ttk.Frame(slider_frame)
-            row.pack(fill=tk.X, padx=4, pady=2)
-        
-            ttk.Label(row, text=f"Point {i+1} Y").pack(side=tk.LEFT)
-        
-            s = tk.Scale(
-                row,
-                from_=-200,
-                to=200,
-                orient=tk.HORIZONTAL,
-                length=250,
-                resolution=1,
-                command=lambda val, idx=i: self._on_slider_move(idx, val),
-                state=tk.DISABLED
-            )
-            s.pack(side=tk.LEFT, padx=10)
-        
-            self.sliders.append(s)
 
         # Matplotlib Figure embedded in Tk
         self.fig: Figure = Figure(figsize=(9, 6), dpi=100)
@@ -413,14 +383,6 @@ class OrthoApp:
         self.points = []
         self.btn_save_transform["state"] = tk.DISABLED
         self._disable_clicks()
-
-        self.base_points = None
-        self.point_offsets = [0, 0, 0, 0]
-        
-        for s in getattr(self, "sliders", []):
-            s.set(0)
-            s["state"] = tk.DISABLED
-        
         if due_to_selection_change:
             # Clear the displayed image to force reloading the correct one for new selection
             self.current_img = None
@@ -484,83 +446,6 @@ class OrthoApp:
         self.selected_time = self.lb_time.get(sel[0])
         self._clear_points_state(due_to_selection_change=True)
 
-
-    # ---- Previous GCP handling ----
-    def _try_load_previous_gcps(self):
-        cam = self.selected_camera
-    
-        gcps_cam_dir = gcps_dir / cam
-        if not gcps_cam_dir.exists():
-            return
-    
-        files = sorted(gcps_cam_dir.glob(f"{cam}_gcps_img_*.csv"))
-        if not files:
-            return
-    
-        latest_file = files[-1]
-    
-        try:
-            pts = []
-            with latest_file.open("r") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    pts.append((int(float(row[0])), int(float(row[1]))))
-    
-            if len(pts) == 4:
-                self.base_points = pts
-                self.point_offsets = [0, 0, 0, 0]
-    
-                for s in self.sliders:
-                    s.set(0)
-                    s["state"] = tk.NORMAL
-    
-                self._apply_offsets_and_draw()
-    
-                self._disable_clicks()
-                self.status.set("Loaded previous GCPs. Adjust each point with sliders.")
-    
-        except Exception as e:
-            print(f"[WARN] Failed to load previous GCPs: {e}")
-
-    def _on_slider_move(self, idx, val):
-        if self.base_points is None:
-            return
-    
-        self.point_offsets[idx] = int(float(val))
-        self._apply_offsets_and_draw()
-
-    def _apply_offsets_and_draw(self):
-        if self.base_points is None or self.current_img is None:
-            return
-        
-        # Save current zoom/pan state
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-    
-        self.points = [
-            (x, y + self.point_offsets[i])
-            for i, (x, y) in enumerate(self.base_points)
-        ]
-    
-        self._draw_image()
-        
-        #Restore zoom/pan
-        self.ax.set_xlim(xlim)
-        self.ax.set_ylim(ylim)
-
-    
-        for i, (x, y) in enumerate(self.points, start=1):
-            color = '#ED6B57' if i == 1 else '#6CD4FF'
-            self.ax.plot(x, y, 'o', color=color, markersize=3)
-            self.ax.text(x, y, str(i), color=color, fontsize=8,
-                         ha='left', va='bottom')
-    
-        self.canvas.draw_idle()
-    
-        self._disable_clicks()
-        self.btn_save_transform["state"] = tk.NORMAL
-
-
     # ---- Core actions ----
 
     def load_frame_selection(self):
@@ -586,7 +471,6 @@ class OrthoApp:
         self._draw_image()
         self._enable_clicks()
         self.points = []
-        self._try_load_previous_gcps()
         self.status.set(f"Loaded: {self.selected_camera} {self.selected_date} {self.selected_time}. Click 4 points in order.")
         self.btn_reset["state"] = tk.NORMAL
         self.btn_save_transform["state"] = tk.DISABLED  # enable after 4 points
@@ -619,12 +503,6 @@ class OrthoApp:
         if self.current_img is None:
             return
         self._clear_points_state(due_to_selection_change=False)
-        self.base_points = None
-        self.point_offsets = [0, 0, 0, 0]
-        
-        for s in self.sliders:
-            s.set(0)
-            s["state"] = tk.DISABLED
 
     def _on_click(self, event):
         if hasattr(self, "toolbar") and self.toolbar.mode != "":
