@@ -277,6 +277,44 @@ def save_geotiff(
             for i in range(bands):
                 dst.write(img[:, :, i], i + 1)
 
+def crop_image_to_extent(img, source_extent, target_extent):
+
+    sxmin, sxmax, symin, symax = source_extent
+    txmin, txmax, tymin, tymax = target_extent
+
+    h, w = img.shape[:2]
+
+    col0 = int((txmin - sxmin) / (sxmax - sxmin) * w)
+    col1 = int((txmax - sxmin) / (sxmax - sxmin) * w)
+
+    row1 = int((symax - tymin) / (symax - symin) * h)
+    row0 = int((symax - tymax) / (symax - symin) * h)
+
+    col0 = max(0, col0)
+    col1 = min(w, col1)
+
+    row0 = max(0, row0)
+    row1 = min(h, row1)
+
+    cropped_img = img[row0:row1, col0:col1]
+
+    # compute TRUE extent from actual pixel indices
+
+    new_xmin = sxmin + (col0 / w) * (sxmax - sxmin)
+    new_xmax = sxmin + (col1 / w) * (sxmax - sxmin)
+
+    new_ymax = symax - (row0 / h) * (symax - symin)
+    new_ymin = symax - (row1 / h) * (symax - symin)
+
+    cropped_extent = (
+        new_xmin,
+        new_xmax,
+        new_ymin,
+        new_ymax
+    )
+
+    return cropped_img, cropped_extent
+
 
 # ---------------------------
 # GUI App
@@ -372,6 +410,30 @@ class OrthoApp:
             text="Use EPSG:32623",
             variable=self.use_absolute_coords
         ).pack(side=tk.LEFT, padx=(10, 0))
+
+        # Display buffer
+        ttk.Label(btns, text="Buffer (m):").pack(side=tk.LEFT, padx=(15, 2))
+        
+        self.buffer_var = tk.DoubleVar(value=20.0)
+        
+        ttk.Entry(
+            btns,
+            textvariable=self.buffer_var,
+            width=6
+        ).pack(side=tk.LEFT)
+
+
+        # Display clipper
+        ttk.Label(btns, text="Clip (m):").pack(side=tk.LEFT, padx=(15, 2))
+        
+        self.clip_var = tk.DoubleVar(value=20.0)
+        
+        ttk.Entry(
+            btns,
+            textvariable=self.clip_var,
+            width=6
+        ).pack(side=tk.LEFT)
+
 
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
@@ -813,7 +875,6 @@ class OrthoApp:
             p.parent.mkdir(parents=True, exist_ok=True)
             
             # Case 1: manual extent (from CLI)
-            
             if (
                 not getattr(self, "_absolute_mode", False)
                 and self.custom_xlim is not None
@@ -839,9 +900,36 @@ class OrthoApp:
                 with p.open("w") as f:
                     json.dump(self.global_extent, f, indent=2)
                 print(f"[Saved] Global extent: {p}")
+
             
+            buffer_m = self.buffer_var.get()
+            clip_m = self.clip_var.get()
+
             if getattr(self, "_absolute_mode", False):
-                display_extent = transformation["extent"]
+
+                gcps = load_gcps_real(cam)
+            
+                xs = [coord[0] for coord in gcps.values()]
+                ys = [coord[1] for coord in gcps.values()]
+            
+                
+                display_extent = (
+                    min(xs) - buffer_m,
+                    max(xs) + buffer_m,
+                    min(ys) - buffer_m,
+                    max(ys) + buffer_m
+                )
+
+                              
+                clip_extent = (
+                    min(xs) - clip_m,
+                    max(xs) + clip_m,
+                    min(ys) - clip_m,
+                    max(ys) + clip_m
+                )
+
+
+            
             else:
                 display_extent = self.global_extent
         
@@ -1011,18 +1099,28 @@ class OrthoApp:
         
         if getattr(self, "_absolute_mode", False):
         
-            save_geotiff(
+            cropped_img, cropped_extent = crop_image_to_extent(
                 transformation["transformed_img"],
                 transformation["extent"],
+                clip_extent
+            )
+
+            
+            save_geotiff(
+                cropped_img,
+                cropped_extent,
                 ortho_tif,
                 epsg=32623
             )
+
         
             print(f"[Saved] GeoTIFF: {ortho_tif}")
 
         
         print(f"[Saved] GeoTIFF: {ortho_tif}")
         print("GeoTIFF extent:", transformation["extent"])
+        print("Requested clip extent:", clip_extent)
+        print("Actual crop extent:", cropped_extent)
 
         
 
@@ -1081,6 +1179,7 @@ def main(argv: List[str]) -> int:
         default=[-10, 20],
         help="Manually set y-axis limits for display (default: -10 20)"
     )
+  
     args = parser.parse_args(argv)
 
     frames_root = frames_dir
