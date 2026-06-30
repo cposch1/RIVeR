@@ -184,15 +184,12 @@ def transform_json_path(cam: str, date: str, time_: str) -> Path:
     return rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
 
 
-# ---------------------------
-# Orthorectification display helpers
-# ---------------------------
+def global_extent_path(cam: str, absolute_mode: bool) -> Path:
 
-def global_extent_path(cam: str) -> Path:
-    """
-    Path where the per-camera global orthorectification extent is stored.
-    """
-    return rect_dir / cam / f"{cam}_global_extent.json"
+    if absolute_mode:
+        return rect_dir / cam / f"{cam}_global_extent_epsg32623.json"
+
+    return rect_dir / cam / f"{cam}_global_extent_local.json"
 
 
 # ---------------------------
@@ -277,6 +274,11 @@ def save_geotiff(
             for i in range(bands):
                 dst.write(img[:, :, i], i + 1)
 
+
+# ---------------------------
+# Image extent helpers
+# ---------------------------
+
 def crop_image_to_extent(img, source_extent, target_extent):
 
     sxmin, sxmax, symin, symax = source_extent
@@ -350,6 +352,14 @@ class OrthoApp:
         self._build_ui()
         self._populate_cameras()
 
+        
+    def _use_manual_extent(self):
+            return (
+                self.custom_xlim is not None
+                and self.custom_ylim is not None
+            )
+
+
     # ---- UI ----
 
     def _build_ui(self):
@@ -416,24 +426,32 @@ class OrthoApp:
         
         self.buffer_var = tk.DoubleVar(value=20.0)
         
-        ttk.Entry(
+        self.buffer_entry = ttk.Entry(
             btns,
             textvariable=self.buffer_var,
             width=6
-        ).pack(side=tk.LEFT)
-
-
+        )
+        
+        self.buffer_entry.pack(side=tk.LEFT)
+        
+        
         # Display clipper
         ttk.Label(btns, text="Clip (m):").pack(side=tk.LEFT, padx=(15, 2))
         
         self.clip_var = tk.DoubleVar(value=20.0)
         
-        ttk.Entry(
+        self.clip_entry = ttk.Entry(
             btns,
             textvariable=self.clip_var,
             width=6
-        ).pack(side=tk.LEFT)
+        )
+        
+        self.clip_entry.pack(side=tk.LEFT)
 
+        # Buffer/clipper availability
+        if self._use_manual_extent():
+            self.buffer_entry.configure(state="disabled")
+            self.clip_entry.configure(state="disabled")
 
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
@@ -544,7 +562,6 @@ class OrthoApp:
             # Clear the displayed image to force reloading the correct one for new selection
             self.current_img = None
             self.current_frame_path = None
-            self.ax.clear()
             self.ax.axis('off')
             self.canvas.draw_idle()
             self.status.set("Selection changed. Click 'Load Frame' to continue.")
@@ -563,31 +580,7 @@ class OrthoApp:
             
         self.selected_camera = self.lb_camera.get(sel[0])
 
-        p = global_extent_path(self.selected_camera)
-        
-        
-        if (
-            not getattr(self, "_absolute_mode", False)
-            and self.custom_xlim is not None
-            and self.custom_ylim is not None
-        ):
-
-            # ✅ Deterministic manual extent
-            self.global_extent = (
-                self.custom_xlim[0],
-                self.custom_xlim[1],
-                self.custom_ylim[0],
-                self.custom_ylim[1]
-            )
-        
-        elif p.exists():
-            try:
-                with p.open("r") as f:
-                    self.global_extent = tuple(json.load(f))
-            except Exception:
-                self.global_extent = None
-        else:
-            self.global_extent = None
+        self.global_extent = None
 
         self._populate_dates()
         self._clear_points_state(due_to_selection_change=True)
@@ -868,70 +861,99 @@ class OrthoApp:
         
         # Orthorectified image with overlay
         if 'transformed_img' in transformation and 'extent' in transformation:
-
-            p = global_extent_path(cam)
-
-            # Make sure directory always exists BEFORE any write attempt
+        
+            p = global_extent_path(cam, self._absolute_mode)
             p.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Case 1: manual extent (from CLI)
-            if (
-                not getattr(self, "_absolute_mode", False)
-                and self.custom_xlim is not None
-                and self.custom_ylim is not None
-            ):
-
-                self.global_extent = (
+        
+            xmin, xmax, ymin, ymax = transformation["extent"]
+        
+            buffer_m = self.buffer_var.get()
+            clip_m = self.clip_var.get()
+        
+            # --------------------------------------------------
+            # CASE 1: Manual extent provided via CLI
+            # --------------------------------------------------
+            if self._use_manual_extent():
+        
+                display_extent = (
                     self.custom_xlim[0],
                     self.custom_xlim[1],
                     self.custom_ylim[0],
                     self.custom_ylim[1]
                 )
-            
-            # Case 2: compute from first transformation
-            elif getattr(self, "_absolute_mode", False):
-                self.global_extent = tuple(transformation['extent'])
-            
-            elif self.global_extent is None:
-                self.global_extent = tuple(transformation['extent'])
-            
-            # Save ONCE (prevents overwriting)
-            if not p.exists():
-                with p.open("w") as f:
-                    json.dump(self.global_extent, f, indent=2)
-                print(f"[Saved] Global extent: {p}")
-
-            
-            buffer_m = self.buffer_var.get()
-            clip_m = self.clip_var.get()
-
-            if getattr(self, "_absolute_mode", False):
-
+        
+                clip_extent = display_extent
+        
+                self.global_extent = display_extent
+        
+            # --------------------------------------------------
+            # CASE 2: EPSG mode
+            # --------------------------------------------------
+            elif self._absolute_mode:
+        
                 gcps = load_gcps_real(cam)
-            
+        
                 xs = [coord[0] for coord in gcps.values()]
                 ys = [coord[1] for coord in gcps.values()]
-            
-                
+        
                 display_extent = (
                     min(xs) - buffer_m,
                     max(xs) + buffer_m,
                     min(ys) - buffer_m,
                     max(ys) + buffer_m
                 )
-
-                              
+        
                 clip_extent = (
                     min(xs) - clip_m,
                     max(xs) + clip_m,
                     min(ys) - clip_m,
                     max(ys) + clip_m
                 )
-
-
-            
+        
+                self.global_extent = display_extent
+        
+            # --------------------------------------------------
+            # CASE 3: Local coordinates
+            # --------------------------------------------------
             else:
-                display_extent = self.global_extent
+                rw_points = []
+            
+                for x, y in [
+                    (x1_pix, y1_pix),
+                    (x2_pix, y2_pix),
+                    (x3_pix, y3_pix),
+                    (x4_pix, y4_pix)
+                ]:
+                    rw = transform_pixel_to_real_world(
+                        x,
+                        y,
+                        transformation["transformation_matrix"]
+                    )
+                    rw_points.append(rw)
+            
+                rw_points = np.array(rw_points)
+            
+                xs = rw_points[:, 0]
+                ys = rw_points[:, 1]
+            
+                display_extent = (
+                    np.min(xs) - buffer_m,
+                    np.max(xs) + buffer_m,
+                    np.min(ys) - buffer_m,
+                    np.max(ys) + buffer_m
+                )
+            
+                clip_extent = None
+                self.global_extent = display_extent
+                
+        
+            # Save global extent once
+            if not p.exists():
+                with p.open("w") as f:
+                    json.dump(display_extent, f, indent=2)
+                
+                print(f"[Saved] Global extent: {p}")
+
         
             # ----- draw raster in its TRUE world position -----
             ax2.imshow(
@@ -1020,6 +1042,8 @@ class OrthoApp:
         print("GLOBAL EXTENT:", self.global_extent)
         print("DISPLAY EXTENT:", display_extent)
         print("TRANSFORMATION EXTENT:", transformation["extent"])
+        print("DISPLAY EXTENT:", display_extent)
+        print("CLIP EXTENT:", clip_extent)
 
               
         # Save orthorectification image
@@ -1094,34 +1118,31 @@ class OrthoApp:
         ortho_tif_dir.mkdir(parents=True, exist_ok=True)
         
         ortho_tif = ortho_tif_dir / f"{cam}_orthotif_{date}_{time_}.tif"
-
         
+        # Local coordinates -> NO GEOTIFF
+        if not self._absolute_mode:
         
-        if getattr(self, "_absolute_mode", False):
+            print("[Info] Local coordinate mode: GeoTIFF export skipped.")
+        
+        # EPSG coordinates -> export cropped GeoTIFF
+        else:
         
             cropped_img, cropped_extent = crop_image_to_extent(
                 transformation["transformed_img"],
                 transformation["extent"],
                 clip_extent
             )
-
-            
+        
             save_geotiff(
                 cropped_img,
                 cropped_extent,
                 ortho_tif,
                 epsg=32623
             )
-
         
             print(f"[Saved] GeoTIFF: {ortho_tif}")
-
-        
-        print(f"[Saved] GeoTIFF: {ortho_tif}")
-        print("GeoTIFF extent:", transformation["extent"])
-        print("Requested clip extent:", clip_extent)
-        print("Actual crop extent:", cropped_extent)
-
+            print("Requested clip extent:", clip_extent)
+            print("Actual crop extent:", cropped_extent)
         
 
         # Save transformation matrix JSON
@@ -1167,8 +1188,7 @@ def main(argv: List[str]) -> int:
         nargs=2,
         type=float,
         metavar=("XMIN", "XMAX"),
-        default=[-20, 50],
-        help="Manually set x-axis limits for display (default: -20 50)"
+        default=None,
     )
     
     parser.add_argument(
@@ -1176,8 +1196,7 @@ def main(argv: List[str]) -> int:
         nargs=2,
         type=float,
         metavar=("YMIN", "YMAX"),
-        default=[-10, 20],
-        help="Manually set y-axis limits for display (default: -10 20)"
+        default=None,
     )
   
     args = parser.parse_args(argv)
