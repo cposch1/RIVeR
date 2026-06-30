@@ -56,6 +56,9 @@ import os  # used in main() for env check
 import numpy as np
 import pandas as pd
 
+import rasterio
+from rasterio.transform import from_bounds
+
 import matplotlib
 matplotlib.use("TkAgg")  # embed in Tkinter
 import matplotlib.pyplot as plt
@@ -193,6 +196,89 @@ def global_extent_path(cam: str) -> Path:
 
 
 # ---------------------------
+# GEOTIFF export helpers
+# ---------------------------
+
+
+def save_geotiff(
+    img: np.ndarray,
+    extent,
+    output_path: Path,
+    epsg: int = 32623
+):
+    """
+    Save orthorectified raster as GeoTIFF.
+
+    Parameters
+    ----------
+    img : ndarray
+        Orthorectified image.
+
+    extent : tuple/list
+        [xmin, xmax, ymin, ymax]
+        Real-world coordinates in EPSG:32623.
+
+    output_path : Path
+        Output GeoTIFF path.
+
+    epsg : int
+        CRS EPSG code.
+    """
+
+    xmin, xmax, ymin, ymax = extent
+
+    height, width = img.shape[:2]
+
+    transform = from_bounds(
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if img.ndim == 2:
+
+        with rasterio.open(
+            output_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype=img.dtype,
+            crs=f"EPSG:{epsg}",
+            transform=transform,
+            compress="lzw"
+        ) as dst:
+
+            dst.write(img, 1)
+
+    else:
+
+        bands = img.shape[2]
+
+        with rasterio.open(
+            output_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=bands,
+            dtype=img.dtype,
+            crs=f"EPSG:{epsg}",
+            transform=transform,
+            compress="lzw"
+        ) as dst:
+
+            for i in range(bands):
+                dst.write(img[:, :, i], i + 1)
+
+
+# ---------------------------
 # GUI App
 # ---------------------------
 
@@ -220,6 +306,7 @@ class OrthoApp:
         self.current_img = None
         self.current_frame_path: Optional[Path] = None
         self._transformation = None
+        self._absolute_mode = False
 
         # Build UI
         self._build_ui()
@@ -277,6 +364,14 @@ class OrthoApp:
 
         self.btn_refresh = ttk.Button(btns, text="Refresh Index", command=self._refresh_index)
         self.btn_refresh.pack(side=tk.LEFT, padx=(0, 8))
+
+        # Local/absolute coord check
+        self.use_absolute_coords = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            btns,
+            text="Use EPSG:32623",
+            variable=self.use_absolute_coords
+        ).pack(side=tk.LEFT, padx=(10, 0))
 
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
@@ -408,7 +503,13 @@ class OrthoApp:
 
         p = global_extent_path(self.selected_camera)
         
-        if self.custom_xlim is not None and self.custom_ylim is not None:
+        
+        if (
+            not getattr(self, "_absolute_mode", False)
+            and self.custom_xlim is not None
+            and self.custom_ylim is not None
+        ):
+
             # ✅ Deterministic manual extent
             self.global_extent = (
                 self.custom_xlim[0],
@@ -574,6 +675,7 @@ class OrthoApp:
                     ortho_clean_dir = rect_dir / cam / "ortho_imgs"
                     ortho_clean = ortho_clean_dir / f"{cam}_orthoimg_{date}_{time_}.png"
                     ortho_clean.unlink(missing_ok=True)
+
         
                 except Exception as e:
                     print(f"[WARN] Failed to clean previous outputs: {e}")
@@ -618,8 +720,27 @@ class OrthoApp:
 
         # ---- Run transform
         try:
-            transformation = transform(self.df_frames, cam, date, time_)  # from RIVeR
+            
+            transformation = transform(
+                self.df_frames,
+                cam,
+                date,
+                time_,
+                absolute_coords=self.use_absolute_coords.get()
+            )
+
             self._transformation = transformation
+            self._absolute_mode = self.use_absolute_coords.get()
+
+            
+           
+            print("Extent:")
+            print(transformation["extent"])
+            
+            print("Transformation matrix:")
+            print(np.array(transformation["transformation_matrix"]))
+
+
         except Exception as e:
             messagebox.showerror("Transform", f"Transformation failed:\n{e}")
             return
@@ -682,8 +803,8 @@ class OrthoApp:
         pts = [(x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix)]
         [ax1.text(x, y, str(i), color='#6CD4FF', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
 
-        # Orthorectified image with overlay
         
+        # Orthorectified image with overlay
         if 'transformed_img' in transformation and 'extent' in transformation:
 
             p = global_extent_path(cam)
@@ -692,7 +813,13 @@ class OrthoApp:
             p.parent.mkdir(parents=True, exist_ok=True)
             
             # Case 1: manual extent (from CLI)
-            if self.custom_xlim is not None and self.custom_ylim is not None:
+            
+            if (
+                not getattr(self, "_absolute_mode", False)
+                and self.custom_xlim is not None
+                and self.custom_ylim is not None
+            ):
+
                 self.global_extent = (
                     self.custom_xlim[0],
                     self.custom_xlim[1],
@@ -701,6 +828,9 @@ class OrthoApp:
                 )
             
             # Case 2: compute from first transformation
+            elif getattr(self, "_absolute_mode", False):
+                self.global_extent = tuple(transformation['extent'])
+            
             elif self.global_extent is None:
                 self.global_extent = tuple(transformation['extent'])
             
@@ -710,7 +840,10 @@ class OrthoApp:
                     json.dump(self.global_extent, f, indent=2)
                 print(f"[Saved] Global extent: {p}")
             
-            display_extent = self.global_extent
+            if getattr(self, "_absolute_mode", False):
+                display_extent = transformation["extent"]
+            else:
+                display_extent = self.global_extent
         
             # ----- draw raster in its TRUE world position -----
             ax2.imshow(
@@ -721,13 +854,23 @@ class OrthoApp:
             # ----- lock the map frame -----
             
             # X limits
-            if self.custom_xlim is not None:
+            
+            if (
+                not getattr(self, "_absolute_mode", False)
+                and self.custom_xlim is not None
+            ):
+
                 ax2.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
             else:
                 ax2.set_xlim(display_extent[0], display_extent[1])
 
             # Y limits
-            if self.custom_ylim is not None:
+            
+            if (
+                not getattr(self, "_absolute_mode", False)
+                and self.custom_ylim is not None
+            ):
+
                 ax2.set_ylim(self.custom_ylim[0], self.custom_ylim[1])
             else:
                 ax2.set_ylim(display_extent[2], display_extent[3])
@@ -785,9 +928,13 @@ class OrthoApp:
             ax2.set_title('Orthorectified Image')
 
         fig.tight_layout()
+        print("ABSOLUTE MODE:", self._absolute_mode)
+        print("GLOBAL EXTENT:", self.global_extent)
+        print("DISPLAY EXTENT:", display_extent)
+        print("TRANSFORMATION EXTENT:", transformation["extent"])
 
+              
         # Save orthorectification image
-        
         ortho_dir = rect_dir / cam / "orthorectification_imgs"
         ortho_dir.mkdir(parents=True, exist_ok=True)
         
@@ -812,12 +959,22 @@ class OrthoApp:
         )
     
         # Apply same display limits
-        if self.custom_xlim is not None:
+        
+        if (
+            not getattr(self, "_absolute_mode", False)
+            and self.custom_xlim is not None
+        ):
+
             ax_clean.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
         else:
             ax_clean.set_xlim(display_extent[0], display_extent[1])
     
-        if self.custom_ylim is not None:
+        
+        if (
+            not getattr(self, "_absolute_mode", False)
+            and self.custom_ylim is not None
+        ):
+
             ax_clean.set_ylim(self.custom_ylim[0], self.custom_ylim[1])
         else:
             ax_clean.set_ylim(display_extent[2], display_extent[3])
@@ -825,7 +982,8 @@ class OrthoApp:
         ax_clean.set_aspect("equal", adjustable="box")
         #ax_clean.axis("off")  # ✅ removes axes, labels, ticks
     
-        
+
+        # Save clean image
         ortho_clean_dir = rect_dir / cam / "ortho_imgs"
         ortho_clean_dir.mkdir(parents=True, exist_ok=True)
         
@@ -838,8 +996,35 @@ class OrthoApp:
                     transparent=True)
     
         plt.close(fig_clean)  # prevent extra window
+
     
         print(f"[Saved] Clean ortho image: {ortho_clean}")
+
+
+        # Save geotiff
+        ortho_tif_dir = rect_dir / cam / "ortho_tifs"
+        ortho_tif_dir.mkdir(parents=True, exist_ok=True)
+        
+        ortho_tif = ortho_tif_dir / f"{cam}_orthotif_{date}_{time_}.tif"
+
+        
+        
+        if getattr(self, "_absolute_mode", False):
+        
+            save_geotiff(
+                transformation["transformed_img"],
+                transformation["extent"],
+                ortho_tif,
+                epsg=32623
+            )
+        
+            print(f"[Saved] GeoTIFF: {ortho_tif}")
+
+        
+        print(f"[Saved] GeoTIFF: {ortho_tif}")
+        print("GeoTIFF extent:", transformation["extent"])
+
+        
 
         # Save transformation matrix JSON
         try:
