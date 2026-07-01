@@ -60,6 +60,7 @@ import rasterio
 from rasterio.transform import from_bounds
 
 from skimage import exposure
+import cv2
 
 import matplotlib
 matplotlib.use("TkAgg")  # embed in Tkinter
@@ -157,6 +158,15 @@ def load_frames_index_only(frames_root: Path) -> pd.DataFrame:
         return pd.read_parquet(parquet_path)
     except Exception as e:
         raise RuntimeError(f"Failed to read frames index at {parquet_path}: {e}")
+
+
+def reference_grid_transform_path(cam: str) -> Path:
+    return rect_dir / cam / f"{cam}_reference_grid_transform.json"
+
+def reference_grid_gcps_path(cam: str) -> Path:
+    return rect_dir / cam / f"{cam}_reference_gcps.csv"
+
+
 
 
 # ---------------------------
@@ -356,6 +366,8 @@ class OrthoApp:
         self.point_offsets = [0, 0, 0, 0]
         self.sliders = []
 
+        self.reference_transform = None
+
         # Build UI
         self._build_ui()
         self._populate_cameras()
@@ -520,6 +532,15 @@ class OrthoApp:
         )
         self.clahe_slider.pack(side=tk.LEFT)
 
+
+        # Reference grid check
+        self.save_reference_grid = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            btns,
+            text="Save current GCPs as\nreference grid",
+            variable=self.save_reference_grid
+        ).pack(side=tk.LEFT, padx=(15, 0))
+
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
         ttk.Label(self.master, textvariable=self.status).pack(side=tk.TOP, anchor="w", padx=8)
@@ -654,6 +675,31 @@ class OrthoApp:
             
         self.selected_camera = self.lb_camera.get(sel[0])
 
+        ref_path = reference_grid_transform_path(
+            self.selected_camera
+        )
+        
+        if ref_path.exists():
+        
+            try:
+        
+                with ref_path.open("r") as f:
+        
+                    self.reference_transform = json.load(f)
+        
+            except Exception as e:
+        
+                print(
+                    f"[WARN] Failed to load "
+                    f"reference transform: {e}"
+                )
+        
+                self.reference_transform = None
+        
+        else:
+        
+            self.reference_transform = None
+
         self.global_extent = None
 
         self._populate_dates()
@@ -684,11 +730,67 @@ class OrthoApp:
         if not gcps_cam_dir.exists():
             return
     
-        files = sorted(gcps_cam_dir.glob(f"{cam}_gcps_img_*.csv"))
+        files = sorted(
+            gcps_cam_dir.glob(
+                f"{cam}_gcps_img_*.csv"
+            )
+        )
+        
         if not files:
             return
-    
-        latest_file = files[-1]
+        
+        current_dt = pd.to_datetime(
+            f"{self.selected_date}{self.selected_time}",
+            format="%Y%m%d%H%M%S"
+        )
+        
+        candidate_files = []
+        
+        for f in files:
+        
+            try:
+        
+                stem = f.stem
+        
+                parts = stem.split("_")
+        
+                file_date = parts[-2]
+                file_time = parts[-1]
+        
+                file_dt = pd.to_datetime(
+                    f"{file_date}{file_time}",
+                    format="%Y%m%d%H%M%S"
+                )
+        
+                if file_dt < current_dt:
+        
+                    candidate_files.append(
+                        (
+                            file_dt,
+                            f
+                        )
+                    )
+        
+            except Exception:
+                continue
+        
+        if not candidate_files:
+        
+            print(
+                "[INFO] No previous GCP solution found"
+            )
+        
+            return
+        
+        latest_file = max(
+            candidate_files,
+            key=lambda x: x[0]
+        )[1]
+        
+        print(
+            f"[INFO] Using previous GCPs: "
+            f"{latest_file.name}"
+        )
     
         try:
             pts = []
@@ -707,6 +809,7 @@ class OrthoApp:
             if len(pts) == 4:
     
                 self.base_points = pts
+                print("Reference GCPs loaded")
                 self.point_offsets = [0, 0, 0, 0]
     
                 for s in self.sliders:
@@ -780,6 +883,106 @@ class OrthoApp:
         self._disable_clicks()
         self.btn_save_transform["state"] = tk.NORMAL
 
+
+    # Reference grid handler
+    def _load_reference_gcps(self):
+        if self.selected_camera is None:
+            return None
+    
+        p = reference_grid_gcps_path(
+            self.selected_camera
+        )
+    
+        if not p.exists():
+    
+            print(
+                "[INFO] No reference GCP file found"
+            )
+    
+            return None
+    
+        pts = []
+    
+        with p.open("r") as f:
+    
+            reader = csv.reader(f)
+    
+            for row in reader:
+    
+                pts.append(
+                    (
+                        float(row[0]),
+                        float(row[1])
+                    )
+                )
+    
+        if len(pts) != 4:
+    
+            print(
+                "[WARN] Reference GCP file "
+                "does not contain 4 points"
+            )
+    
+            return None
+    
+        print(
+            "[INFO] Loaded reference grid GCPs"
+        )
+    
+        return np.array(
+            pts,
+            dtype=np.float32
+        )
+
+    def _draw_reference_grid(self):
+        img_pts = self._load_reference_gcps()
+        
+        if img_pts is None:
+            return
+        
+        P1, P2, P3, P4 = img_pts
+
+        for t in np.linspace(0, 1, 11):
+            top = (
+                (1-t) * P1 +
+                t * P2
+            )
+        
+            bottom = (
+                (1-t) * P4 +
+                t * P3
+            )
+        
+            self.ax.plot(
+                [top[0], bottom[0]],
+                [top[1], bottom[1]],
+                color="yellow",
+                alpha=0.6,
+                linewidth=0.8
+            )
+
+        for t in np.linspace(0, 1, 11):
+            left = (
+                (1-t) * P1 +
+                t * P4
+            )
+        
+            right = (
+                (1-t) * P2 +
+                t * P3
+            )
+        
+            self.ax.plot(
+                [left[0], right[0]],
+                [left[1], right[1]],
+                color="yellow",
+                alpha=0.6,
+                linewidth=0.8
+            )
+
+
+
+
     # ---- Core actions ----
 
     def load_frame_selection(self):
@@ -822,6 +1025,8 @@ class OrthoApp:
                 else self.current_img
             )
             self.ax.imshow(img_to_show)
+
+            self._draw_reference_grid()
 
             self.ax.set_title(
                 f"Select GCPs:\n"
@@ -1017,6 +1222,28 @@ class OrthoApp:
         date = self.selected_date
         time_ = self.selected_time
 
+        # Save ref grid gcps
+        if self.save_reference_grid.get():
+            ref_gcps = reference_grid_gcps_path(cam)
+        
+            ref_gcps.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+        
+            with ref_gcps.open(
+                "w",
+                newline=""
+            ) as f:
+        
+                writer = csv.writer(f)
+        
+                writer.writerows(self.points)
+        
+            print(
+                f"[Saved] Reference GCPs: {ref_gcps}"
+            )
+
         
         # Check if transformation already exists
         transf_file = transform_json_path(cam, date, time_)
@@ -1103,6 +1330,21 @@ class OrthoApp:
 
             self._transformation = transformation
             self._absolute_mode = self.use_absolute_coords.get()
+
+            ref_path = reference_grid_transform_path(cam)
+
+            if self.save_reference_grid.get():
+                with ref_path.open("w") as f:
+            
+                    json.dump(
+                        transformation["transformation_matrix"],
+                        f,
+                        indent=2
+                    )
+            
+                print(
+                    f"[Saved] Reference grid transform: {ref_path}"
+                )
 
             
            
