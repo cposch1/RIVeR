@@ -363,7 +363,7 @@ class OrthoApp:
         self.display_img = None
 
         self.base_points: Optional[List[Tuple[int, int]]] = None
-        self.point_offsets = [0, 0, 0, 0]
+        self.point_offsets = [0, 0, 0, 0, 0]
         self.sliders = []
 
         self.reference_transform = None
@@ -428,7 +428,7 @@ class OrthoApp:
             fill=tk.Y
         )
         self.sliders = []
-        for i in range(4):
+        for i in range(5):
         
             row = ttk.Frame(slider_frame)
             row.pack(
@@ -533,13 +533,14 @@ class OrthoApp:
         self.clahe_slider.pack(side=tk.LEFT)
 
 
-        # Reference grid check
-        self.save_reference_grid = tk.BooleanVar(value=False)
+        # Fan line toggling
+        self.show_fans = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             btns,
-            text="Save current GCPs as\nreference grid",
-            variable=self.save_reference_grid
-        ).pack(side=tk.LEFT, padx=(15, 0))
+            text="Show fan lines",
+            variable=self.show_fans,
+            command=self._apply_offsets_and_draw
+        ).pack(side=tk.LEFT, padx=(15,0))
 
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
@@ -648,7 +649,7 @@ class OrthoApp:
         self.btn_save_transform["state"] = tk.DISABLED
         self._disable_clicks()
         self.base_points = None
-        self.point_offsets = [0, 0, 0, 0]
+        self.point_offsets = [0, 0, 0, 0, 0]
         
         for s in getattr(self, "sliders", []):
             s.set(0)
@@ -797,7 +798,7 @@ class OrthoApp:
     
             with latest_file.open("r") as f:
                 reader = csv.reader(f)
-    
+            
                 for row in reader:
                     pts.append(
                         (
@@ -805,16 +806,54 @@ class OrthoApp:
                             int(float(row[1]))
                         )
                     )
+            
+            stake_file = (
+                gcps_dir
+                / cam
+                / f"{cam}_stake_point_{file_date}_{file_time}.csv"
+            )
+            
+            if stake_file.exists():
+            
+                with stake_file.open("r") as f:
+            
+                    row = next(csv.reader(f))
+            
+                    pts.append(
+                        (
+                            int(float(row[0])),
+                            int(float(row[1]))
+                        )
+                    )
+            
+            print(f"Loaded from: {latest_file}")
+            print(f"Raw file had {len(pts)} points")
+            print(pts)
+
     
-            if len(pts) == 4:
-    
+            if len(pts) in (4, 5):
+                
+                
+                if len(pts) == 4:
+                
+                    print(
+                        "[INFO] No stake point found in previous solution."
+                    )
+
+                print(f"Loaded {len(pts)} points")
+                print(pts)
                 self.base_points = pts
                 print("Reference GCPs loaded")
-                self.point_offsets = [0, 0, 0, 0]
+                self.point_offsets = [0, 0, 0, 0, 0]
     
-                for s in self.sliders:
+                for i, s in enumerate(self.sliders):
+
                     s.set(0)
-                    s["state"] = tk.NORMAL
+                
+                    if i < len(self.base_points):
+                        s["state"] = tk.NORMAL
+                    else:
+                        s["state"] = tk.DISABLED
     
                 self._apply_offsets_and_draw()
     
@@ -828,8 +867,13 @@ class OrthoApp:
             print(f"[WARN] Failed to load previous GCPs: {e}")
 
     
+    
     def _on_slider_move(self, idx, val):
+    
         if self.base_points is None:
+            return
+    
+        if idx >= len(self.base_points):
             return
     
         self.point_offsets[idx] = int(float(val))
@@ -837,17 +881,30 @@ class OrthoApp:
         self._apply_offsets_and_draw()
 
 
+
     def _apply_offsets_and_draw(self):
+        
         if self.base_points is None or self.current_img is None:
             return
-    
+        print("base_points:", len(self.base_points))
+        print("point_offsets:", len(self.point_offsets))
+        print(self.point_offsets)
+   
         # Save current zoom/pan state
         xlim = self.ax.get_xlim()
         ylim = self.ax.get_ylim()
     
+        n = min(
+            len(self.base_points),
+            len(self.point_offsets)
+        )
+        
         self.points = [
-            (x, y + self.point_offsets[i])
-            for i, (x, y) in enumerate(self.base_points)
+            (
+                self.base_points[i][0],
+                self.base_points[i][1] + self.point_offsets[i]
+            )
+            for i in range(n)
         ]
     
         self._draw_image()
@@ -868,10 +925,13 @@ class OrthoApp:
                 markersize=3
             )
     
+            
+            label = "P5" if i == 5 else str(i)
+            
             self.ax.text(
                 x,
                 y,
-                str(i),
+                label,
                 color=color,
                 fontsize=8,
                 ha='left',
@@ -971,7 +1031,7 @@ class OrthoApp:
                 linewidth=1
             )
 
-        if len(self.point_offsets) == 4:
+        if len(self.point_offsets) >= 4:
             self.ax.plot(
             [x2, x1],
             [
@@ -991,6 +1051,30 @@ class OrthoApp:
             ],
             color="0.6",
             alpha=0.6,
+            linewidth=1.5
+        )
+
+    def _draw_gcp_lines(self):
+
+        if len(self.points) < 4:
+            return
+    
+        x1, y1 = self.points[0]
+        x2, y2 = self.points[1]
+        x3, y3 = self.points[2]
+        x4, y4 = self.points[3]
+    
+        self.ax.plot(
+            [x1, x2],
+            [y1, y2],
+            color="0.4",
+            linewidth=1.5
+        )
+    
+        self.ax.plot(
+            [x4, x3],
+            [y4, y3],
+            color="0.4",
             linewidth=1.5
         )
 
@@ -1038,7 +1122,9 @@ class OrthoApp:
             )
             self.ax.imshow(img_to_show)
 
-            self._draw_gcp_fans()
+            self._draw_gcp_lines()
+            if self.show_fans.get():
+                self._draw_gcp_fans()
 
             self.ax.set_title(
                 f"Select GCPs:\n"
@@ -1152,10 +1238,13 @@ class OrthoApp:
                 markersize=3
             )
         
+            
+            label = "P5" if i == 5 else str(i)
+            
             self.ax.text(
                 x,
                 y,
-                str(i),
+                label,
                 color=color,
                 fontsize=8,
                 ha='left',
@@ -1188,11 +1277,16 @@ class OrthoApp:
         )
     
         self.base_points = None
-        self.point_offsets = [0, 0, 0, 0]
+        self.point_offsets = [0, 0, 0, 0, 0]
     
         for s in self.sliders:
-            s.set(0)
-            s["state"] = tk.DISABLED
+            for i, s in enumerate(self.sliders):
+                s.set(0)
+            
+                if i < len(self.base_points):
+                    s["state"] = tk.NORMAL
+                else:
+                    s["state"] = tk.DISABLED
 
     def _on_click(self, event):
         if hasattr(self, "toolbar") and self.toolbar.mode != "":
@@ -1215,17 +1309,29 @@ class OrthoApp:
         self.canvas.draw_idle()
 
         if n == 4:
-            # Done selecting
-            self._disable_clicks()
-            print("4 points collected:", self.points)
-            self.status.set("4 points collected. Click 'Save & Transform' to proceed.")
+            self.status.set(
+                "4 GCPs selected. Click stake point not affected by surface hydrology."
+            )
+        
             self.btn_save_transform["state"] = tk.NORMAL
+
+        if n == 5:
+            self._disable_clicks()
+        
+            self.status.set(
+                "Stake point not affected by surface hydrology.\nAll required points selected."
+            )
 
     def save_and_transform(self):
         """Single action: save GCPs (CSV+PNG), distances CSV, run transform, save outputs, show ortho image."""
-        if len(self.points) != 4:
-            messagebox.showwarning("GCPs", "Please click exactly 4 points.")
+        
+        if len(self.points) < 4:
+            messagebox.showwarning(
+                "GCPs",
+                "Please select at least the 4 orthorectification GCPs."
+            )
             return
+
         if not (self.selected_camera and self.selected_date and self.selected_time):
             messagebox.showwarning("Selection", "Please select Camera, Date, and Time.")
             return
@@ -1331,6 +1437,27 @@ class OrthoApp:
 
         # ---- Run transform
         try:
+            gcps_img_file = (
+                gcps_dir
+                / cam
+                / f"{cam}_gcps_img_{date}_{time_}.csv"
+            )
+
+            # Save GCPs
+            with gcps_img_file.open("w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerows(self.points[:4])
+
+            # Save metric point
+            if len(self.points) >= 5:
+                metric_file = (
+                    gcps_dir
+                    / cam
+                    / f"{cam}_stake_point_{date}_{time_}.csv"
+                )
+                with metric_file.open("w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(self.points[4])
             
             transformation = transform(
                 self.df_frames,
@@ -1403,8 +1530,13 @@ class OrthoApp:
             x3_pix, y3_pix = points_dict['point3']
             x4_pix, y4_pix = points_dict['point4']
         except Exception:
-            if len(self.points) != 4:
-                raise RuntimeError("Need 4 GCPs (save or select).")
+            if len(self.points) < 4:
+                messagebox.showwarning(
+                    "GCPs",
+                    "Please select at least the 4 orthorectification GCPs."
+                )
+                return
+
             (x1_pix, y1_pix), (x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix) = self.points
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
