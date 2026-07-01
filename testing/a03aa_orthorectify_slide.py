@@ -934,53 +934,65 @@ class OrthoApp:
             dtype=np.float32
         )
 
-    def _draw_reference_grid(self):
-        img_pts = self._load_reference_gcps()
-        
-        if img_pts is None:
+  
+
+    def _draw_gcp_fans(self):
+
+        if self.base_points is None:
             return
-        
-        P1, P2, P3, P4 = img_pts
+    
+        x1, y1 = self.base_points[0]
+        x2, y2 = self.base_points[1]
+        x3, y3 = self.base_points[2]
+        x4, y4 = self.base_points[3]
 
-        for t in np.linspace(0, 1, 11):
-            top = (
-                (1-t) * P1 +
-                t * P2
+    
+        offsets = np.arange(
+            -100,
+            101,
+            10
+        )
+    
+        for dy in offsets:
+            self.ax.plot(
+                [x2, x1],
+                [y2, y1 + dy],
+                color="0.6",      # light grey
+                alpha=0.3,
+                linewidth=1
             )
-        
-            bottom = (
-                (1-t) * P4 +
-                t * P3
-            )
+        for dy in offsets:
         
             self.ax.plot(
-                [top[0], bottom[0]],
-                [top[1], bottom[1]],
-                color="yellow",
-                alpha=0.6,
-                linewidth=0.8
+                [x3, x4],
+                [y3, y4 + dy],
+                color="0.6",      # light grey
+                alpha=0.3,
+                linewidth=1
             )
 
-        for t in np.linspace(0, 1, 11):
-            left = (
-                (1-t) * P1 +
-                t * P4
-            )
-        
-            right = (
-                (1-t) * P2 +
-                t * P3
-            )
-        
+        if len(self.point_offsets) == 4:
             self.ax.plot(
-                [left[0], right[0]],
-                [left[1], right[1]],
-                color="yellow",
-                alpha=0.6,
-                linewidth=0.8
-            )
-
-
+            [x2, x1],
+            [
+                y2 + self.point_offsets[1],
+                y1 + self.point_offsets[0]
+            ],
+            color="0.6",
+            alpha=0.6,
+            linewidth=1.5
+        )
+        
+        self.ax.plot(
+            [x3, x4],
+            [
+                y3 + self.point_offsets[2],
+                y4 + self.point_offsets[3]
+            ],
+            color="0.6",
+            alpha=0.6,
+            linewidth=1.5
+        )
 
 
     # ---- Core actions ----
@@ -1026,7 +1038,7 @@ class OrthoApp:
             )
             self.ax.imshow(img_to_show)
 
-            self._draw_reference_grid()
+            self._draw_gcp_fans()
 
             self.ax.set_title(
                 f"Select GCPs:\n"
