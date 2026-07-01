@@ -59,6 +59,8 @@ import pandas as pd
 import rasterio
 from rasterio.transform import from_bounds
 
+from skimage import exposure
+
 import matplotlib
 matplotlib.use("TkAgg")  # embed in Tkinter
 import matplotlib.pyplot as plt
@@ -66,6 +68,7 @@ import matplotlib.image as mpimg
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.patches import Rectangle
+from matplotlib.colors import Normalize
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -347,6 +350,7 @@ class OrthoApp:
         self.current_frame_path: Optional[Path] = None
         self._transformation = None
         self._absolute_mode = False
+        self.display_img = None
 
         # Build UI
         self._build_ui()
@@ -417,12 +421,12 @@ class OrthoApp:
         self.use_absolute_coords = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             btns,
-            text="Use EPSG:32623",
+            text="Use EPSG:32623\n(enables GEOTIF export)",
             variable=self.use_absolute_coords
         ).pack(side=tk.LEFT, padx=(10, 0))
 
         # Display buffer
-        ttk.Label(btns, text="Buffer (m):").pack(side=tk.LEFT, padx=(15, 2))
+        ttk.Label(btns, text="Image display and export extent\nbuffer around GCPs (m):").pack(side=tk.LEFT, padx=(15, 2))
         
         self.buffer_var = tk.DoubleVar(value=20.0)
         
@@ -436,7 +440,7 @@ class OrthoApp:
         
         
         # Display clipper
-        ttk.Label(btns, text="Clip (m):").pack(side=tk.LEFT, padx=(15, 2))
+        ttk.Label(btns, text="GEOTIF export extent\nbuffer around GCPs (m):").pack(side=tk.LEFT, padx=(15, 2))
         
         self.clip_var = tk.DoubleVar(value=20.0)
         
@@ -452,6 +456,22 @@ class OrthoApp:
         if self._use_manual_extent():
             self.buffer_entry.configure(state="disabled")
             self.clip_entry.configure(state="disabled")
+
+        # Contrast enhancement
+        ttk.Label(btns, text="CLAHE\n(contrast enhancement)").pack(side=tk.LEFT, padx=(15, 2))
+        self.clahe_var = tk.IntVar(value=0)
+        
+        self.clahe_slider = tk.Scale(
+            btns,
+            from_=0,
+            to=5,
+            resolution=1,
+            orient=tk.HORIZONTAL,
+            variable=self.clahe_var,
+            command=self._update_contrast,
+            length=150
+        )
+        self.clahe_slider.pack(side=tk.LEFT)
 
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
@@ -619,6 +639,7 @@ class OrthoApp:
         self.current_frame_path = Path(frame_path)
         try:
             self.current_img = mpimg.imread(str(self.current_frame_path))
+            self.display_img = self.current_img.copy()
         except Exception as e:
             messagebox.showerror("Read Image", f"Failed to read image from path:\n{self.current_frame_path}\n\n{e}")
             return
@@ -636,13 +657,83 @@ class OrthoApp:
         self.ax.clear()
         self.ax.axis("off")
         if self.current_img is not None:
-            self.ax.imshow(self.current_img)
+            img_to_show = (
+                self.display_img
+                if self.display_img is not None
+                else self.current_img
+            )
+            self.ax.imshow(img_to_show)
+
             self.ax.set_title(
                 f"Select GCPs:\n"
                 f"1) left upstream\n2) right upstream\n3) right downstream\n4) left downstream\n\n"
                 f"{self.current_frame_path}"
             )
         self.canvas.draw_idle()
+
+    
+    def _update_contrast(self, value=None):
+
+        if self.current_img is None:
+            return
+    
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+    
+        img = self.current_img.astype(np.float32)
+    
+        if img.max() > 1:
+            img = img / 255.0
+    
+        # --------------------------------------------------
+        # Estimate valid range only from image center
+        # --------------------------------------------------
+    
+        h, w = img.shape[:2]
+    
+        center = img[
+            int(0.33*h):int(0.66*h),
+            int(0.25*w):int(0.75*w)
+        ]
+    
+        # optional: ignore almost-black pixels
+        valid = center[center > 0.02]
+    
+        if valid.size > 0:
+    
+            lo = np.percentile(valid, 1)
+            hi = np.percentile(valid, 99)
+    
+            img = (img - lo) / (hi - lo)
+            img = np.clip(img, 0, 1)
+    
+        strength = self.clahe_var.get()
+
+        if strength > 0:
+        
+            clip_limit_map = {
+                1: 0.005,
+                2: 0.01,
+                3: 0.02,
+                4: 0.05,
+                5: 0.10,
+            }
+        
+            img = exposure.equalize_adapthist(
+                img,
+                clip_limit=clip_limit_map[strength]
+            )
+    
+        self.display_img = img
+    
+        self._draw_image()
+    
+        self.ax.set_xlim(xlim)
+        self.ax.set_ylim(ylim)
+    
+        self.canvas.draw_idle()
+
+
 
     def _enable_clicks(self):
         if self._mpl_cid:

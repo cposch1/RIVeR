@@ -1,10 +1,24 @@
 TO DO:
 
+
+---------------------------------------------------------------------------
+make absolute orthorectification also work for a03a (slide) and a03b (auto)
+---------------------------------------------------------------------------
+
+
+
+---------------------------------------------------------------------------
 think about using cross-section selection only once a day
 make all scripts run on the server
+---------------------------------------------------------------------------
 
+
+---------------------------------------------------------------------------
 fixes for piv needed:
 - output not confident
 - issues with negative aois?
 - issues with too small aois
 - all-NaN values issue
+
+----> explore other methods
+---------------------------------------------------------------------------
