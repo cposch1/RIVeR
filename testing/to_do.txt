@@ -2,7 +2,10 @@ TO DO:
 
 
 ---------------------------------------------------------------------------
-make absolute orthorectification also work for a03a (slide) and a03b (auto)
+make absolute orthorectification also work for a03b (auto)
+a03aa now saves 5th point (for "non-hydro terrain")
+	- but residual error/warnings from "save reference grid" -> clean that up
+	- do some test runs and comput metrics for P5y vs other Pys
 ---------------------------------------------------------------------------
 
 

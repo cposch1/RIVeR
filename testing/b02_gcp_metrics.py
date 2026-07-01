@@ -29,7 +29,6 @@ direc = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1
 start_date = pd.to_datetime("2025-07-01 00:00")
 end_date   = pd.to_datetime("2025-07-25 00:00")
 
-# %%
 # ==================================================
 # LOAD GCPS DATA
 # ==================================================
@@ -70,7 +69,7 @@ df_gcps = (
 # %%
 # Scatter + regression
 
-x_var = "datetime"
+x_var = "2_y"
 y_var = "y"
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 10))
@@ -81,13 +80,21 @@ for i in range(1, 5):
 
     if x_var == "datetime":
         x = df_gcps[x_var].values
+    elif len(x_var) > 1:
+        x = df_gcps[x_var].values
+        ax.set_xlim(300,550)
     else:
         x = df_gcps[f"{i}_{x_var}"].values
+        ax.set_xlim(300,550)
 
     if y_var == "datetime":
         y = df_gcps[y_var].values
+    elif len(y_var) > 1:
+        y = df_gcps[y_var].values
+        ax.set_ylim(300,550)
     else:
         y = df_gcps[f"{i}_{y_var}"].values
+        ax.set_ylim(300,550)
     
 
     # Scatter
@@ -97,6 +104,45 @@ for i in range(1, 5):
     ax.grid()
     ax.tick_params(axis='x', rotation=90)
     ax.set_title(f"GCP {i}")
+
+    # Regression
+    from scipy.stats import linregress
+
+    if x_var != "datetime" and y_var != "datetime":
+    
+        mask = np.isfinite(x) & np.isfinite(y)
+    
+        if np.sum(mask) > 1:
+    
+            result = linregress(
+                x[mask],
+                y[mask]
+            )
+    
+            b = result.slope
+            c = result.intercept
+            r = result.rvalue
+    
+            x_fit = np.linspace(
+                np.min(x[mask]),
+                np.max(x[mask]),
+                100
+            )
+    
+            y_fit = b * x_fit + c
+    
+            ax.plot(
+                x_fit,
+                y_fit,
+                color="red",
+                linewidth=2,
+                label=(
+                    f"y = {b:.3f}x + {c:.3f}\n"
+                    f"r = {r:.3f}"
+                )
+            )
+    
+            ax.legend()
 
 plt.tight_layout()
 plt.show()
