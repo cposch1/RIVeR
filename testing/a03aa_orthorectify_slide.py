@@ -160,14 +160,6 @@ def load_frames_index_only(frames_root: Path) -> pd.DataFrame:
         raise RuntimeError(f"Failed to read frames index at {parquet_path}: {e}")
 
 
-def reference_grid_transform_path(cam: str) -> Path:
-    return rect_dir / cam / f"{cam}_reference_grid_transform.json"
-
-def reference_grid_gcps_path(cam: str) -> Path:
-    return rect_dir / cam / f"{cam}_reference_gcps.csv"
-
-
-
 
 # ---------------------------
 # Orthorectification helpers
@@ -365,8 +357,6 @@ class OrthoApp:
         self.base_points: Optional[List[Tuple[int, int]]] = None
         self.point_offsets = [0, 0, 0, 0, 0]
         self.sliders = []
-
-        self.reference_transform = None
 
         # Build UI
         self._build_ui()
@@ -675,32 +665,6 @@ class OrthoApp:
             return
             
         self.selected_camera = self.lb_camera.get(sel[0])
-
-        ref_path = reference_grid_transform_path(
-            self.selected_camera
-        )
-        
-        if ref_path.exists():
-        
-            try:
-        
-                with ref_path.open("r") as f:
-        
-                    self.reference_transform = json.load(f)
-        
-            except Exception as e:
-        
-                print(
-                    f"[WARN] Failed to load "
-                    f"reference transform: {e}"
-                )
-        
-                self.reference_transform = None
-        
-        else:
-        
-            self.reference_transform = None
-
         self.global_extent = None
 
         self._populate_dates()
@@ -944,57 +908,7 @@ class OrthoApp:
         self.btn_save_transform["state"] = tk.NORMAL
 
 
-    # Reference grid handler
-    def _load_reference_gcps(self):
-        if self.selected_camera is None:
-            return None
-    
-        p = reference_grid_gcps_path(
-            self.selected_camera
-        )
-    
-        if not p.exists():
-    
-            print(
-                "[INFO] No reference GCP file found"
-            )
-    
-            return None
-    
-        pts = []
-    
-        with p.open("r") as f:
-    
-            reader = csv.reader(f)
-    
-            for row in reader:
-    
-                pts.append(
-                    (
-                        float(row[0]),
-                        float(row[1])
-                    )
-                )
-    
-        if len(pts) != 4:
-    
-            print(
-                "[WARN] Reference GCP file "
-                "does not contain 4 points"
-            )
-    
-            return None
-    
-        print(
-            "[INFO] Loaded reference grid GCPs"
-        )
-    
-        return np.array(
-            pts,
-            dtype=np.float32
-        )
-
-  
+    # Reference fans handler
 
     def _draw_gcp_fans(self):
 
@@ -1340,29 +1254,7 @@ class OrthoApp:
         date = self.selected_date
         time_ = self.selected_time
 
-        # Save ref grid gcps
-        if self.save_reference_grid.get():
-            ref_gcps = reference_grid_gcps_path(cam)
-        
-            ref_gcps.parent.mkdir(
-                parents=True,
-                exist_ok=True
-            )
-        
-            with ref_gcps.open(
-                "w",
-                newline=""
-            ) as f:
-        
-                writer = csv.writer(f)
-        
-                writer.writerows(self.points)
-        
-            print(
-                f"[Saved] Reference GCPs: {ref_gcps}"
-            )
-
-        
+       
         # Check if transformation already exists
         transf_file = transform_json_path(cam, date, time_)
         
@@ -1469,23 +1361,7 @@ class OrthoApp:
 
             self._transformation = transformation
             self._absolute_mode = self.use_absolute_coords.get()
-
-            ref_path = reference_grid_transform_path(cam)
-
-            if self.save_reference_grid.get():
-                with ref_path.open("w") as f:
-            
-                    json.dump(
-                        transformation["transformation_matrix"],
-                        f,
-                        indent=2
-                    )
-            
-                print(
-                    f"[Saved] Reference grid transform: {ref_path}"
-                )
-
-            
+           
            
             print("Extent:")
             print(transformation["extent"])
