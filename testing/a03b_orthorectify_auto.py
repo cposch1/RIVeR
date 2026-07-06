@@ -215,6 +215,7 @@ def main():
     parser.add_argument("--json", required=True)
     parser.add_argument("--abs-coords",action="store_true",help="Use EPSG:32623 coordinates and export GeoTIFFs")
     parser.add_argument("--buffer",type=float,default=20.0,help="Buffer around GCP extent (m)")
+    parser.add_argument("--dyn",action="store_true",help="Process daily transformations dynamically.")
     args = parser.parse_args()
 
     json_path = Path(args.json)
@@ -235,6 +236,18 @@ def main():
     ).sort_values(["date_yyyymmdd", "time_hhmmss"])
 
     print(f"[INFO] Processing {len(df_unique)} scenes")
+
+    gcp_files = sorted((gcps_dir / cam).glob(f"{cam}_gcps_img_*.csv"))
+    available_gcps = {}
+    for f in gcp_files:
+    
+        stem = f.stem
+        parts = stem.split("_")
+    
+        date = parts[-2]
+        time_ = parts[-1]
+    
+        available_gcps[date] = time_
 
     # Extents handling
     if abs_mod:
@@ -270,7 +283,9 @@ def main():
 
 
     # ✅ reference GCPs
-    gcp_ref = gcps_dir / cam / f"{cam}_gcps_img_{ref_date}_{ref_time}.csv"
+    gcp_ref = gcps_dir / cam / f"{cam}_gcps_img_{ref_date}_{ref_time}.csv"  
+    processed = []
+    skipped = []
 
     for _, row in df_unique.iterrows():
         date = row["date_yyyymmdd"]
@@ -280,8 +295,71 @@ def main():
             # ---------- GCP reuse ----------
             gcp_target = gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.csv"
             gcp_target.parent.mkdir(parents=True, exist_ok=True)
-            if not gcp_target.exists():
-                shutil.copy(gcp_ref, gcp_target)
+            
+            # ---------- GCP handling ----------
+            if args.dyn:
+            
+                # Skip dates with no available GCP file
+                if date not in available_gcps:
+            
+                    skipped.append(
+                        (
+                            date,
+                            time_,
+                            "no_gcps_for_date"
+                        )
+                    )
+            
+                    print(
+                        f"[SKIP] {date} {time_} "
+                        f"(no GCP file available for this date)"
+                    )
+            
+                    continue
+            
+                # Use the reference GCP time for that date
+                reference_time = available_gcps[date]
+            
+                source_gcp = (
+                    gcps_dir
+                    / cam
+                    / f"{cam}_gcps_img_{date}_{reference_time}.csv"
+                )
+            
+                target_gcp = (
+                    gcps_dir
+                    / cam
+                    / f"{cam}_gcps_img_{date}_{time_}.csv"
+                )
+            
+                # Create timestamp-specific GCP file if missing
+                if not target_gcp.exists():
+            
+                    shutil.copy(
+                        source_gcp,
+                        target_gcp
+                    )
+            
+            else:
+                # Original behavior:
+                # copy the single reference GCP file to all scenes
+                gcp_target = (
+                    gcps_dir
+                    / cam
+                    / f"{cam}_gcps_img_{date}_{time_}.csv"
+                )
+            
+                gcp_target.parent.mkdir(
+                    parents=True,
+                    exist_ok=True
+                )
+            
+                if not gcp_target.exists():
+            
+                    shutil.copy(
+                        gcp_ref,
+                        gcp_target
+                    )
 
             # ---------- TRANSFORM ----------
             transformation = transform(df, cam, date, time_, absolute_coords=abs_mod)
@@ -482,12 +560,58 @@ def main():
                 print(
                     f"[Saved] GeoTIFF: {ortho_tif}"
                 )
-                
+
+            processed.append(
+                (
+                    date,
+                    time_
+                )
+            )
             print(f"[OK] {date} {time_}")
 
         except Exception as e:
+            skipped.append(
+                (
+                    date,
+                    time_,
+                    str(e)
+                )
+            )
             print(f"[FAIL] {date} {time_}: {e}")
 
+    log_file = rect_dir / cam / "auto_log.txt"
+    with log_file.open("w") as f:
+    
+        f.write("AUTO ORTHORECTIFICATION LOG\n")
+        f.write("=" * 70 + "\n\n")
+    
+        f.write(f"Camera: {cam}\n")
+        f.write(f"Total scenes found: {len(df_unique)}\n")
+        f.write(f"Available img_gcps files: {len(available_gcps)}\n")
+        f.write(f"Processed scenes: {len(processed)}\n")
+        f.write(f"Skipped/failed scenes: {len(skipped)}\n\n")
+    
+        f.write("AVAILABLE IMG_GCPS FILES\n")
+        f.write("-" * 70 + "\n")
+    
+        for d, t in sorted(available_gcps.items()):
+            f.write(
+                f"{d} -> reference GCP time {t}\n"
+            )
+    
+        f.write("\n\nPROCESSED SCENES\n")
+        f.write("-" * 70 + "\n")
+    
+        for d, t in processed:
+            f.write(f"{d} {t}\n")
+    
+        f.write("\n\nSKIPPED / FAILED SCENES\n")
+        f.write("-" * 70 + "\n")
+    
+        for d, t, reason in skipped:
+            f.write(f"{d} {t} : {reason}\n")
+    
+    print(f"[INFO] Log written: {log_file}")
 
 if __name__ == "__main__":
     main()
