@@ -68,16 +68,105 @@ from river.config import *  # noqa
 # ---------------------------
 # Helpers
 # ---------------------------
-
-def parse_json_filename(json_path: Path):
-    m = re.match(r"(.*?)_transform_(\d{8})_(\d{6})\.json", json_path.name)
-    if not m:
-        raise ValueError(f"Invalid JSON name: {json_path}")
-    return m.group(1), m.group(2), m.group(3)
-
-
 def load_frames_index(frames_root: Path):
     return pd.read_parquet(frames_root / "_frame_paths.parquet")
+
+# ---------------------------
+# Transformation helpers
+# ---------------------------
+
+from river.core.loading_data import (
+    load_gcps_img,
+    load_dist,
+    load_gcps_real,
+)
+
+from river.core.coordinate_transform import (
+    oblique_view_transformation_matrix,
+    transform_pixel_to_real_world,
+)
+
+def transform_single_frame(
+    frame_path,
+    gcp_cam,
+    gcp_date,
+    gcp_time,
+    absolute_coords=False
+):
+    """
+    Orthorectify a specific frame instead of forcing
+    0000000000.jpg through load_frame().
+    """
+
+    points = load_gcps_img(
+        gcp_cam,
+        gcp_date,
+        gcp_time
+    )
+
+    dist = load_dist(gcp_cam)
+
+    # GCP image coordinates
+    x1_pix, y1_pix = points["point1"]
+    x2_pix, y2_pix = points["point2"]
+    x3_pix, y3_pix = points["point3"]
+    x4_pix, y4_pix = points["point4"]
+
+    # Distances
+    d12 = dist[0]
+    d23 = dist[1]
+    d34 = dist[2]
+    d41 = dist[3]
+    d13 = dist[4]
+    d24 = dist[5]
+
+    if absolute_coords:
+
+        gcps_real = load_gcps_real(gcp_cam)
+
+        east1, north1 = gcps_real["point1"]
+        east2, north2 = gcps_real["point2"]
+
+        transformation = (
+            oblique_view_transformation_matrix(
+                x1_pix, y1_pix,
+                x2_pix, y2_pix,
+                x3_pix, y3_pix,
+                x4_pix, y4_pix,
+                d12,
+                d23,
+                d34,
+                d41,
+                d13,
+                d24,
+                image_path=str(frame_path),
+                east1=east1,
+                north1=north1,
+                east2=east2,
+                north2=north2,
+                enforce_d12=False
+            )
+        )
+
+    else:
+
+        transformation = (
+            oblique_view_transformation_matrix(
+                x1_pix, y1_pix,
+                x2_pix, y2_pix,
+                x3_pix, y3_pix,
+                x4_pix, y4_pix,
+                d12,
+                d23,
+                d34,
+                d41,
+                d13,
+                d24,
+                image_path=str(frame_path)
+            )
+        )
+
+    return transformation
 
 
 # ---------------------------
@@ -212,38 +301,69 @@ def crop_image_to_extent(img, source_extent, target_extent):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--json", required=True)
     parser.add_argument("--abs-coords",action="store_true",help="Use EPSG:32623 coordinates and export GeoTIFFs")
     parser.add_argument("--buffer",type=float,default=20.0,help="Buffer around GCP extent (m)")
-    parser.add_argument("--dyn",action="store_true",help="Process daily transformations dynamically.")
     parser.add_argument("--time",type=str,help="Only process scenes with this HHMMSS timestamp")
     parser.add_argument("--overwrite",action="store_true",help="Overwrite existing outputs")
-
+    parser.add_argument("--all-frames",action="store_true",help="Process every frame listed in the parquet")
+    parser.add_argument("--camera",required=True)
+    parser.add_argument("--dyn",action="store_true",help="Process daily transformations dynamically.")
+    parser.add_argument("--ref-date")
+    parser.add_argument("--ref-time")
 
     args = parser.parse_args()
+    
+    if not args.dyn:
+        if args.ref_date is None:
+            parser.error(
+                "--ref-date required "
+                "when not using --dyn"
+            )
+    
+        if args.ref_time is None:
+            parser.error(
+                "--ref-time required "
+                "when not using --dyn"
+            )
 
-    json_path = Path(args.json)
-    cam, ref_date, ref_time = parse_json_filename(json_path)
     abs_mod = args.abs_coords
     buffer_m = args.buffer
+    cam = args.camera
 
     print(f"[INFO] Camera: {cam}")
 
     
-    frames_root = frames_dir
+    frames_root = frames_dir      
+
     df = load_frames_index(frames_root)
 
     df = df[df["camera"] == cam]
 
-    df_unique = df.drop_duplicates(
-        subset=["camera", "date_yyyymmdd", "time_hhmmss"]
-    ).sort_values(["date_yyyymmdd", "time_hhmmss"])
+    if args.all_frames:
+        df_proc = df.sort_values(
+            ["date_yyyymmdd",
+             "time_hhmmss",
+             "frame_path"]
+        )
+    
+    else:
+    
+        df_proc = df.drop_duplicates(
+            subset=[
+                "camera",
+                "date_yyyymmdd",
+                "time_hhmmss"
+            ]
+        ).sort_values(
+            ["date_yyyymmdd",
+             "time_hhmmss"]
+        )
 
     # Optional time filter
     if args.time is not None:
     
-        df_unique = df_unique[
-            df_unique["time_hhmmss"]
+        df_proc = df_proc[
+            df_proc["time_hhmmss"]
             .astype(str)
             .str.zfill(6)
             == args.time
@@ -251,10 +371,23 @@ def main():
     
         print(
             f"[INFO] Filtering to time {args.time}: "
-            f"{len(df_unique)} scenes"
+            f"{len(df_proc)} scenes"
         )
 
-    print(f"[INFO] Processing {len(df_unique)} scenes")
+    
+    df_test = df_proc[
+        (df_proc["date_yyyymmdd"] == "20250723")
+        & (df_proc["time_hhmmss"] == "120000")
+    ]
+    
+    print(
+        df_test["frame_path"]
+        .head(20)
+        .tolist()
+    )
+
+    
+    print(f"[INFO] Processing {len(df_proc)} scenes")
 
     gcp_files = sorted((gcps_dir / cam).glob(f"{cam}_gcps_img_*.csv"))
     available_gcps = {}
@@ -302,45 +435,84 @@ def main():
 
 
     # ✅ reference GCPs
-    gcp_ref = gcps_dir / cam / f"{cam}_gcps_img_{ref_date}_{ref_time}.csv"  
+    gcp_ref = (
+        gcps_dir
+        / cam
+        / (
+            f"{cam}_gcps_img_"
+            f"{args.ref_date}_"
+            f"{args.ref_time}.csv"
+        )
+    ) 
     processed = []
     skipped = []
+    transform_cache = {}
 
-    for _, row in df_unique.iterrows():
+    for _, row in df_proc.iterrows():
 
         date = row["date_yyyymmdd"]
         time_ = row["time_hhmmss"]
+
+        frame_path = Path(row["frame_path"])
+        frame_stem = frame_path.stem
+        print(frame_path.name)
+        
+        transf_file = (rect_dir/ cam/ "transforms"/ date/ f"{cam}_transform_{date}_{time_}.json")
+
     
         # ----------------------------------------------------------
         # Skip already processed scenes unless --overwrite is used
         # ----------------------------------------------------------
+  
         full_png = (
             full_dir
-            / f"{cam}_orthorect_{date}_{time_}.png"
+            / date
+            / time_
+            / f"{frame_stem}_orthorect.png"
         )
-    
+        
         clean_png = (
             clean_dir
-            / f"{cam}_orthoimg_{date}_{time_}.png"
+            / date
+            / time_
+            / f"{frame_stem}_orthoimg.png"
         )
-    
-        transf_file = (
-            rect_dir
-            / cam
-            / f"{cam}_transform_{date}_{time_}.json"
+
+        
+        full_png.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+        
+        clean_png.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+        
+        transf_file.parent.mkdir(
+            parents=True,
+            exist_ok=True
         )
     
         outputs_exist = (
             full_png.exists()
             and clean_png.exists()
-            and transf_file.exists()
         )
         
         if abs_mod:
             ortho_tif = (
                 tif_dir
-                / f"{cam}_orthotif_{date}_{time_}.tif"
+                / date
+                / time_
+                / f"{frame_stem}_orthotif.tif"
             )
+
+            
+            ortho_tif.parent.mkdir(
+                    parents=True,
+                    exist_ok=True
+                )
+
         
             outputs_exist = (
                 outputs_exist
@@ -421,6 +593,7 @@ def main():
             else:
     
                 # Use single reference GCP file
+                source_gcp = gcp_ref
                 if (
                     (not gcp_target.exists() or args.overwrite)
                     and source_gcp != gcp_target
@@ -431,14 +604,24 @@ def main():
                     )
 
             # ---------- TRANSFORM ----------
-            transformation = transform(df, cam, date, time_, absolute_coords=abs_mod)
-
-            # ---------- SAVE JSON ----------
+            transformation = transform_single_frame(
+                frame_path,
+                cam,
+                date,
+                time_,
+                absolute_coords=abs_mod
+            )
+            
             with transf_file.open("w") as f:
-                json.dump(transformation["transformation_matrix"], f, indent=1)
+            
+                json.dump(
+                    transformation["transformation_matrix"],
+                    f,
+                    indent=1
+                )
+
 
             # ---------- LOAD FRAME ----------
-            frame_path = Path(row["frame_path"])
             img = mpimg.imread(frame_path)
 
             # ---------- LOAD GCPs ----------
@@ -562,7 +745,7 @@ def main():
             fig.tight_layout()
 
             fig.savefig(
-                full_dir / f"{cam}_orthorect_{date}_{time_}.png",
+                full_png,
                 dpi=300,
                 bbox_inches='tight',
                 pad_inches=0,
@@ -598,7 +781,7 @@ def main():
             ax.set_ylabel("Y (m)")
 
             fig2.savefig(
-                clean_dir / f"{cam}_orthoimg_{date}_{time_}.png",
+                clean_png,
                 dpi=300,
                 bbox_inches="tight",
                 pad_inches=0,
@@ -607,10 +790,6 @@ def main():
             plt.close(fig2)
 
             if abs_mod:
-                ortho_tif = (
-                    tif_dir
-                    / f"{cam}_orthotif_{date}_{time_}.tif"
-                )
             
                 cropped_img, cropped_extent = crop_image_to_extent(
                     transformation["transformed_img"],
@@ -654,7 +833,7 @@ def main():
         f.write("=" * 70 + "\n\n")
     
         f.write(f"Camera: {cam}\n")
-        f.write(f"Total scenes found: {len(df_unique)}\n")
+        f.write(f"Total scenes found: {len(df_proc)}\n")
         f.write(f"Available img_gcps files: {len(available_gcps)}\n")
         f.write(f"Processed scenes: {len(processed)}\n")
         f.write(f"Skipped/failed scenes: {len(skipped)}\n\n")
