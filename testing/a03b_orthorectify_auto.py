@@ -216,6 +216,10 @@ def main():
     parser.add_argument("--abs-coords",action="store_true",help="Use EPSG:32623 coordinates and export GeoTIFFs")
     parser.add_argument("--buffer",type=float,default=20.0,help="Buffer around GCP extent (m)")
     parser.add_argument("--dyn",action="store_true",help="Process daily transformations dynamically.")
+    parser.add_argument("--time",type=str,help="Only process scenes with this HHMMSS timestamp")
+    parser.add_argument("--overwrite",action="store_true",help="Overwrite existing outputs")
+
+
     args = parser.parse_args()
 
     json_path = Path(args.json)
@@ -234,6 +238,21 @@ def main():
     df_unique = df.drop_duplicates(
         subset=["camera", "date_yyyymmdd", "time_hhmmss"]
     ).sort_values(["date_yyyymmdd", "time_hhmmss"])
+
+    # Optional time filter
+    if args.time is not None:
+    
+        df_unique = df_unique[
+            df_unique["time_hhmmss"]
+            .astype(str)
+            .str.zfill(6)
+            == args.time
+        ]
+    
+        print(
+            f"[INFO] Filtering to time {args.time}: "
+            f"{len(df_unique)} scenes"
+        )
 
     print(f"[INFO] Processing {len(df_unique)} scenes")
 
@@ -288,20 +307,83 @@ def main():
     skipped = []
 
     for _, row in df_unique.iterrows():
+
         date = row["date_yyyymmdd"]
         time_ = row["time_hhmmss"]
-
+    
+        # ----------------------------------------------------------
+        # Skip already processed scenes unless --overwrite is used
+        # ----------------------------------------------------------
+        full_png = (
+            full_dir
+            / f"{cam}_orthorect_{date}_{time_}.png"
+        )
+    
+        clean_png = (
+            clean_dir
+            / f"{cam}_orthoimg_{date}_{time_}.png"
+        )
+    
+        transf_file = (
+            rect_dir
+            / cam
+            / f"{cam}_transform_{date}_{time_}.json"
+        )
+    
+        outputs_exist = (
+            full_png.exists()
+            and clean_png.exists()
+            and transf_file.exists()
+        )
+        
+        if abs_mod:
+            ortho_tif = (
+                tif_dir
+                / f"{cam}_orthotif_{date}_{time_}.tif"
+            )
+        
+            outputs_exist = (
+                outputs_exist
+                and ortho_tif.exists()
+            )
+    
+        if outputs_exist and not args.overwrite:
+    
+            skipped.append(
+                (
+                    date,
+                    time_,
+                    "already_processed"
+                )
+            )
+    
+            print(
+                f"[SKIP] {date} {time_} "
+                "(already processed)"
+            )
+    
+            continue
+    
         try:
+    
             # ---------- GCP reuse ----------
-            gcp_target = gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.csv"
-            gcp_target.parent.mkdir(parents=True, exist_ok=True)
-            
+            gcp_target = (
+                gcps_dir
+                / cam
+                / f"{cam}_gcps_img_{date}_{time_}.csv"
+            )
+    
+            gcp_target.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+    
             # ---------- GCP handling ----------
             if args.dyn:
-            
+    
                 # Skip dates with no available GCP file
                 if date not in available_gcps:
-            
+    
                     skipped.append(
                         (
                             date,
@@ -309,55 +391,42 @@ def main():
                             "no_gcps_for_date"
                         )
                     )
-            
+    
                     print(
                         f"[SKIP] {date} {time_} "
                         f"(no GCP file available for this date)"
                     )
-            
+    
                     continue
-            
+    
                 # Use the reference GCP time for that date
                 reference_time = available_gcps[date]
-            
+    
                 source_gcp = (
                     gcps_dir
                     / cam
                     / f"{cam}_gcps_img_{date}_{reference_time}.csv"
                 )
-            
-                target_gcp = (
-                    gcps_dir
-                    / cam
-                    / f"{cam}_gcps_img_{date}_{time_}.csv"
-                )
-            
-                # Create timestamp-specific GCP file if missing
-                if not target_gcp.exists():
-            
+    
+                # Create timestamp-specific GCP file
+                if (
+                    (not gcp_target.exists() or args.overwrite)
+                    and source_gcp != gcp_target
+                ):
                     shutil.copy(
                         source_gcp,
-                        target_gcp
+                        gcp_target
                     )
-            
+    
             else:
-                # Original behavior:
-                # copy the single reference GCP file to all scenes
-                gcp_target = (
-                    gcps_dir
-                    / cam
-                    / f"{cam}_gcps_img_{date}_{time_}.csv"
-                )
-            
-                gcp_target.parent.mkdir(
-                    parents=True,
-                    exist_ok=True
-                )
-            
-                if not gcp_target.exists():
-            
+    
+                # Use single reference GCP file
+                if (
+                    (not gcp_target.exists() or args.overwrite)
+                    and source_gcp != gcp_target
+                ):
                     shutil.copy(
-                        gcp_ref,
+                        source_gcp,
                         gcp_target
                     )
 
@@ -365,7 +434,6 @@ def main():
             transformation = transform(df, cam, date, time_, absolute_coords=abs_mod)
 
             # ---------- SAVE JSON ----------
-            transf_file = rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
             with transf_file.open("w") as f:
                 json.dump(transformation["transformation_matrix"], f, indent=1)
 

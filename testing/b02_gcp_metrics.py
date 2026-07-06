@@ -19,6 +19,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from pathlib import Path
+from scipy.stats import linregress
+import os
+
+# %%
+
 
 # ==================================================
 # USER SETTINGS
@@ -26,11 +31,12 @@ from pathlib import Path
 
 cam = "ilh-cam1-pt"
 direc = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-06-25_gcp_test\y_slide_pt5_best\gcps")
+temp_dat = 'KAN_U_hour_new.csv'
 start_date = pd.to_datetime("2025-07-01 00:00")
 end_date   = pd.to_datetime("2025-07-25 00:00")
 
 # ==================================================
-# LOAD GCPS DATA
+# LOAD GCPS DATA (Points 1-4)
 # ==================================================
 
 cam_dir = direc / cam
@@ -69,7 +75,7 @@ df_gcps["datetime"] = pd.to_datetime(df_gcps["datetime"]).dt.normalize()
 
 
 # ==================================================
-# LOAD STAKE POINT DATA
+# LOAD STAKE POINT DATA (Point 5 only)
 # ==================================================
 
 cam_dir = direc / cam
@@ -104,7 +110,7 @@ df_stake["datetime"] = pd.to_datetime(df_stake["datetime"]).dt.normalize()
 # ==================================================
 # LOAD TEMP DATA
 # ==================================================
-kan_u = pd.read_csv('KAN_U_day_new.csv', index_col=0)
+kan_u = pd.read_csv(temp_dat, index_col=0)
 df_kanu = (
     kan_u[["t_u"]]
     .reset_index()
@@ -142,6 +148,12 @@ df_kanu
 
 # %%
 df_comb
+
+# %% [markdown]
+# # 1. GCP points metrics
+
+# %% [markdown]
+# ## Spatio-temporal scatters
 
 # %%
 # Scatter + regression
@@ -189,7 +201,7 @@ for i in range(1, 5):
     ax.set_title(f"GCP {i}")
 
     # Regression
-    from scipy.stats import linregress
+    
 
     if x_var != "datetime" and y_var != "datetime":
     
@@ -229,6 +241,9 @@ for i in range(1, 5):
 
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# ## PDD(H) scatter
 
 # %%
 # Scatter + regression
@@ -305,6 +320,12 @@ df_m = pd.merge(
 # %%
 df_m
 
+# %% [markdown]
+# # 2. Stake point metrics
+
+# %% [markdown]
+# ## PDD(H) scatter
+
 # %%
 x_var = "cum_PDD"
 y_var = "5_y"
@@ -354,5 +375,118 @@ if np.sum(mask) > 1:
     plt.legend()
 
 plt.show()
+
+# %%
+# Modell GCP img coordinates
+
+# %%
+model_dir = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\gcp_modelling")
+mod_in = model_dir / "input"
+mod_out = model_dir / "output"
+
+# %%
+df_5gcp = pd.merge(
+    df_gcps,
+    df_stake,
+    on="datetime",
+    how="inner"
+)
+
+# %%
+df_5gcp
+
+# %%
+# define lin regression
+results = []
+
+for gcp_id in range(1, 5):
+    y = df_5gcp[f"{gcp_id}_y"].values
+    x = df_5gcp["5_y"].values
+
+    mask = np.isfinite(x) & np.isfinite(y)
+
+    if np.sum(mask) > 1:
+        result = linregress(x[mask], y[mask])
+
+        results.append({
+            "gcp_id": gcp_id,
+            "slope": result.slope,
+            "intercept": result.intercept,
+            "rvalue": result.rvalue,
+            "pvalue": result.pvalue,
+            "stderr": result.stderr,
+            "intercept_stderr": result.intercept_stderr
+        })
+
+df_lin = pd.DataFrame(results)
+
+
+csv_path = mod_in/ "df_lin.csv"
+
+with open(csv_path, "w", encoding="utf-8", newline="") as f:
+    f.write(f"direc,{direc}\n")  # first line
+    df_lin.to_csv(f, index=False)  # dataframe starts on second line
+
+# %%
+df_lin
+
+# %%
+# mopdel new img coord gcps from point5 using lin regr
+
+# --------------------------------------------------------------
+# Read fixed x coordinates from first available GCP file
+# --------------------------------------------------------------
+first_gcp_file = next(mod_in.glob("*_gcps_img_*.csv"))
+
+gcp_ref = pd.read_csv(first_gcp_file, header=None)
+
+fixed_x = {
+    gcp_id: gcp_ref.iloc[gcp_id - 1, 0]
+    for gcp_id in range(1, 5)
+}
+
+print("Using fixed x coordinates:", fixed_x)
+
+# --------------------------------------------------------------
+# Model new GCP image coordinates from stake point
+# --------------------------------------------------------------
+for stake_file in mod_in.glob("*_stake_point_*.csv"):
+
+    # Read point 5 coordinates
+    stake_df = pd.read_csv(stake_file, header=None)
+
+    x5 = float(stake_df.iloc[0, 0])
+    y5 = float(stake_df.iloc[0, 1])
+
+    output_rows = []
+
+    for gcp_id in range(1, 5):
+
+        x = fixed_x[gcp_id]
+
+        reg = df_lin.loc[df_lin["gcp_id"] == gcp_id].iloc[0]
+
+        y_new = reg["slope"] * y5 + reg["intercept"]
+
+        output_rows.append([
+            int(round(x)),
+            int(round(y_new))
+        ])
+
+    # Create output filename based on stake filename
+    out_name = stake_file.name.replace(
+        "_stake_point_",
+        "_gcps_img_"
+    )
+
+    out_file = mod_out / out_name
+
+    pd.DataFrame(output_rows).to_csv(
+        out_file,
+        header=False,
+        index=False
+    )
+
+    print(f"Written: {out_file.name}")
 
 # %%
