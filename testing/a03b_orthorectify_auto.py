@@ -53,6 +53,9 @@ import re
 import shutil
 from pathlib import Path
 
+import rasterio
+from rasterio.transform import from_bounds
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -78,16 +81,146 @@ def load_frames_index(frames_root: Path):
 
 
 # ---------------------------
+# GEOTIFF export helpers
+# ---------------------------
+
+
+def save_geotiff(
+    img: np.ndarray,
+    extent,
+    output_path: Path,
+    epsg: int = 32623
+):
+    """
+    Save orthorectified raster as GeoTIFF.
+
+    Parameters
+    ----------
+    img : ndarray
+        Orthorectified image.
+
+    extent : tuple/list
+        [xmin, xmax, ymin, ymax]
+        Real-world coordinates in EPSG:32623.
+
+    output_path : Path
+        Output GeoTIFF path.
+
+    epsg : int
+        CRS EPSG code.
+    """
+
+    xmin, xmax, ymin, ymax = extent
+
+    height, width = img.shape[:2]
+
+    transform = from_bounds(
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if img.ndim == 2:
+
+        with rasterio.open(
+            output_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype=img.dtype,
+            crs=f"EPSG:{epsg}",
+            transform=transform,
+            compress="lzw"
+        ) as dst:
+
+            dst.write(img, 1)
+
+    else:
+
+        bands = img.shape[2]
+
+        with rasterio.open(
+            output_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=bands,
+            dtype=img.dtype,
+            crs=f"EPSG:{epsg}",
+            transform=transform,
+            compress="lzw"
+        ) as dst:
+
+            for i in range(bands):
+                dst.write(img[:, :, i], i + 1)
+
+
+# ---------------------------
+# Image extent helpers
+# ---------------------------
+
+def crop_image_to_extent(img, source_extent, target_extent):
+
+    sxmin, sxmax, symin, symax = source_extent
+    txmin, txmax, tymin, tymax = target_extent
+
+    h, w = img.shape[:2]
+
+    col0 = int((txmin - sxmin) / (sxmax - sxmin) * w)
+    col1 = int((txmax - sxmin) / (sxmax - sxmin) * w)
+
+    row1 = int((symax - tymin) / (symax - symin) * h)
+    row0 = int((symax - tymax) / (symax - symin) * h)
+
+    col0 = max(0, col0)
+    col1 = min(w, col1)
+
+    row0 = max(0, row0)
+    row1 = min(h, row1)
+
+    cropped_img = img[row0:row1, col0:col1]
+
+    # compute TRUE extent from actual pixel indices
+
+    new_xmin = sxmin + (col0 / w) * (sxmax - sxmin)
+    new_xmax = sxmin + (col1 / w) * (sxmax - sxmin)
+
+    new_ymax = symax - (row0 / h) * (symax - symin)
+    new_ymin = symax - (row1 / h) * (symax - symin)
+
+    cropped_extent = (
+        new_xmin,
+        new_xmax,
+        new_ymin,
+        new_ymax
+    )
+
+    return cropped_img, cropped_extent
+
+
+# ---------------------------
 # Main
 # ---------------------------
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", required=True)
+    parser.add_argument("--abs-coords",action="store_true",help="Use EPSG:32623 coordinates and export GeoTIFFs")
+    parser.add_argument("--buffer",type=float,default=20.0,help="Buffer around GCP extent (m)")
     args = parser.parse_args()
 
     json_path = Path(args.json)
     cam, ref_date, ref_time = parse_json_filename(json_path)
+    abs_mod = args.abs_coords
+    buffer_m = args.buffer
 
     print(f"[INFO] Camera: {cam}")
 
@@ -103,15 +236,38 @@ def main():
 
     print(f"[INFO] Processing {len(df_unique)} scenes")
 
-    # ✅ GUI defaults
-    xlim = (-20, 50)
-    ylim = (-10, 20)
+    # Extents handling
+    if abs_mod:
+        gcps = load_gcps_real(cam)
+    
+        xs = [coord[0] for coord in gcps.values()]
+        ys = [coord[1] for coord in gcps.values()]
+    
+        display_extent = (
+            min(xs) - buffer_m,
+            max(xs) + buffer_m,
+            min(ys) - buffer_m,
+            max(ys) + buffer_m
+        )
+    else:
+        xlim = (-20, 50)
+        ylim = (-10, 20)
+        display_extent = (
+            xlim[0],
+            xlim[1],
+            ylim[0],
+            ylim[1]
+        )
+    clip_extent = display_extent
 
     # ✅ output dirs
-    full_dir = rect_dir / cam / "orthorectification_imgs_auto"
-    clean_dir = rect_dir / cam / "ortho_imgs_auto"
+    full_dir = rect_dir / cam / "auto_orthorectification_imgs"
+    clean_dir = rect_dir / cam / "auto_ortho_imgs"
+    tif_dir = rect_dir / cam / "auto_ortho_tifs"
     full_dir.mkdir(parents=True, exist_ok=True)
     clean_dir.mkdir(parents=True, exist_ok=True)
+    tif_dir.mkdir(parents=True, exist_ok=True)
+
 
     # ✅ reference GCPs
     gcp_ref = gcps_dir / cam / f"{cam}_gcps_img_{ref_date}_{ref_time}.csv"
@@ -128,7 +284,7 @@ def main():
                 shutil.copy(gcp_ref, gcp_target)
 
             # ---------- TRANSFORM ----------
-            transformation = transform(df, cam, date, time_)
+            transformation = transform(df, cam, date, time_, absolute_coords=abs_mod)
 
             # ---------- SAVE JSON ----------
             transf_file = rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
@@ -172,11 +328,27 @@ def main():
             ax1.plot([x2,x4],[y2,y4], color='#7765E3', linewidth=2)
 
             ax1.plot(x1, y1, 'o', color='#ED6B57', markersize=3)
-            ax1.text(x1,y1,"1",color='#ED6B57',fontsize=8)
-
-            for i,(x,y) in enumerate([(x2,y2),(x3,y3),(x4,y4)],start=2):
-                ax1.plot(x,y,'o',color='#6CD4FF',markersize=3)
-                ax1.text(x,y,str(i),color='#6CD4FF',fontsize=8)
+            ax1.text(x1, y1, "1", color='#ED6B57', fontsize=8)
+            
+            for i, (x, y) in enumerate(
+                [(x2, y2), (x3, y3), (x4, y4)],
+                start=2
+            ):
+                ax1.plot(
+                    x,
+                    y,
+                    'o',
+                    color='#6CD4FF',
+                    markersize=3
+                )
+            
+                ax1.text(
+                    x,
+                    y,
+                    str(i),
+                    color='#6CD4FF',
+                    fontsize=8
+                )
 
             # ORTHO
             ax2.imshow(
@@ -184,9 +356,22 @@ def main():
                 extent=transformation["extent"]
             )
 
-            ax2.set_xlim(*xlim)
-            ax2.set_ylim(*ylim)
-            ax2.set_aspect("equal")
+
+            if abs_mod:
+                ax2.set_xlim(
+                    display_extent[0],
+                    display_extent[1]
+                )
+                
+                ax2.set_ylim(
+                    display_extent[2],
+                    display_extent[3]
+                )
+
+            else:
+                ax2.set_xlim(*xlim)
+                ax2.set_ylim(*ylim)
+                ax2.set_aspect("equal")
 
             ax2.plot([xw[0],xw[1]],[yw[0],yw[1]], color='#6CD4FF', linewidth=2)
             ax2.plot([xw[1],xw[2]],[yw[1],yw[2]], color='#62C655', linewidth=2)
@@ -197,13 +382,12 @@ def main():
 
             ax2.plot(xw[0], yw[0], 'o', color='#ED6B57', markersize=3)
             ax2.text(xw[0], yw[0], "1", color='#ED6B57', fontsize=8)
-
+            
             for i in range(1,4):
                 ax2.plot(xw[i], yw[i], 'o', color='#6CD4FF', markersize=3)
                 ax2.text(xw[i], yw[i], str(i+1), color='#6CD4FF', fontsize=8)
 
             # ✅ SCALE BAR (GUI identical)
-            display_extent = (*xlim, *ylim)
             map_width = display_extent[1] - display_extent[0]
             magnitude = 10 ** np.floor(np.log10(map_width * 0.2))
             scale_length = np.round(map_width * 0.2 / magnitude) * magnitude
@@ -248,9 +432,21 @@ def main():
             ax.imshow(transformation["transformed_img"],
                       extent=transformation["extent"])
 
-            ax.set_xlim(*xlim)
-            ax.set_ylim(*ylim)
-            ax.set_aspect("equal")
+            if abs_mod:
+                ax.set_xlim(
+                    display_extent[0],
+                    display_extent[1]
+                )
+                
+                ax.set_ylim(
+                    display_extent[2],
+                    display_extent[3]
+                )
+
+            else:
+                ax.set_xlim(*xlim)
+                ax.set_ylim(*ylim)
+                ax.set_aspect("equal")
 
             ax.set_xlabel("X (m)")
             ax.set_ylabel("Y (m)")
@@ -264,6 +460,29 @@ def main():
             )
             plt.close(fig2)
 
+            if abs_mod:
+                ortho_tif = (
+                    tif_dir
+                    / f"{cam}_orthotif_{date}_{time_}.tif"
+                )
+            
+                cropped_img, cropped_extent = crop_image_to_extent(
+                    transformation["transformed_img"],
+                    transformation["extent"],
+                    clip_extent
+                )
+            
+                save_geotiff(
+                    cropped_img,
+                    cropped_extent,
+                    ortho_tif,
+                    epsg=32623
+                )
+            
+                print(
+                    f"[Saved] GeoTIFF: {ortho_tif}"
+                )
+                
             print(f"[OK] {date} {time_}")
 
         except Exception as e:
