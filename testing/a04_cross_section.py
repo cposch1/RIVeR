@@ -693,6 +693,57 @@ class CrossSectionApp:
         
             plt.close(fig2)
 
+            fig3, ax3 = plt.subplots(figsize=(12, 8))
+            ax3.imshow(frame)
+            
+            x1, y1 = left_px
+            x2, y2 = right_px
+            
+            dx = x2 - x1
+            dy = y2 - y1
+            
+            length = np.hypot(dx, dy)
+            
+            if length > 0:
+            
+                dx /= length
+                dy /= length
+            
+                extension = 200.0  # pixels beyond each bank
+            
+                x_start = x1 - dx * extension
+                y_start = y1 - dy * extension
+            
+                x_end = x2 + dx * extension
+                y_end = y2 + dy * extension
+            
+                ax3.plot(
+                    [x_start, x_end],
+                    [y_start, y_end],
+                    "--",
+                    color="grey",
+                    alpha=0.5,
+                    linewidth=2
+                )
+            
+            ax3.axis("off")
+            
+            first_frame_img = xs_img_path(
+                self.selected_camera,
+                self.selected_date,
+                self.selected_time,
+                view="first_frame"
+            )
+            
+            fig3.savefig(
+                first_frame_img,
+                dpi=300,
+                bbox_inches="tight",
+                pad_inches=0
+            )
+            
+            plt.close(fig3)
+
         messagebox.showinfo("Saved", f"Cross-section saved:\n{p}")
 
         self._on_date()
