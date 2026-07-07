@@ -122,6 +122,48 @@ def xs_exists(cam, date, time_):
 def find_reference_frame(row):
     return Path(row["frame_path"]).parent / "0000000000.jpg"
 
+def find_previous_xs(cam, date, time_):
+
+    current_ts = pd.to_datetime(
+        f"{date}{time_}",
+        format="%Y%m%d%H%M%S"
+    )
+
+    xs_candidates = []
+
+    cam_dir = bathy_dir / cam
+
+    if not cam_dir.exists():
+        return None
+
+    for xs_file in cam_dir.glob(f"{cam}_xs_coord_*.csv"):
+
+        try:
+            stem = xs_file.stem
+
+            parts = stem.split("_")
+
+            file_date = parts[-2]
+            file_time = parts[-1]
+
+            ts = pd.to_datetime(
+                f"{file_date}{file_time}",
+                format="%Y%m%d%H%M%S"
+            )
+
+            if ts < current_ts:
+                xs_candidates.append((ts, xs_file))
+
+        except Exception:
+            continue
+
+    if not xs_candidates:
+        return None
+
+    xs_candidates.sort(key=lambda x: x[0])
+
+    return xs_candidates[-1][1]
+
 
 # ------------------------------------------------------------
 # GUI App
@@ -142,6 +184,7 @@ class CrossSectionApp:
 
         self.points_rw: List[Tuple[float, float]] = []
 
+        self.xs_line = None
         self.cid_move = None
         self.preview_line = None
 
@@ -177,6 +220,43 @@ class CrossSectionApp:
 
         btns = ttk.Frame(self.master)
         btns.pack(side=tk.TOP, anchor="w")
+
+        slider_frame = ttk.Frame(self.master)
+        slider_frame.pack(side=tk.TOP, fill=tk.X)
+        
+        ttk.Label(
+            slider_frame,
+            text="Left bank X"
+        ).pack(side=tk.LEFT)
+        
+        self.left_slider = tk.Scale(
+            slider_frame,
+            orient=tk.HORIZONTAL,
+            length=300,
+            resolution=0.05,
+            command=self._update_xs_from_sliders
+        )
+        
+        self.left_slider.pack(side=tk.LEFT)
+        
+        
+        ttk.Label(
+            slider_frame,
+            text="Right bank X"
+        ).pack(side=tk.LEFT)
+        
+        self.right_slider = tk.Scale(
+            slider_frame,
+            orient=tk.HORIZONTAL,
+            length=300,
+            resolution=0.05,
+            command=self._update_xs_from_sliders
+        )
+        
+        self.right_slider.pack(side=tk.LEFT)
+        
+        self.left_slider.config(state=tk.DISABLED)
+        self.right_slider.config(state=tk.DISABLED)
 
         ttk.Button(btns, text="Load Ortho", command=self.load_ortho).pack(side=tk.LEFT)
         ttk.Button(btns, text="Reset Points", command=self.reset_points).pack(side=tk.LEFT)
@@ -262,10 +342,41 @@ class CrossSectionApp:
     
         self.fig_canvas.draw_idle()
 
+    def _update_xs_from_sliders(self, value=None):
+        if getattr(self, "_loading_sliders", False):
+            return
+        if len(self.points_rw) != 2:
+            return
+    
+        x1 = self.left_slider.get()
+        x2 = self.right_slider.get()
+    
+        y = self.points_rw[0][1]
+    
+        self.points_rw = [
+            (x1, y),
+            (x2, y)
+        ]
+    
+        
+        if self.xs_line is not None:
+            self.xs_line.remove()
+        
+        self.xs_line, = self.ax.plot(
+            [x1, x2],
+            [y, y],
+            color="black",
+            linewidth=2
+        )
+    
+        self.fig_canvas.draw_idle()
+
     # ---------------- Core ----------------
     def load_ortho(self):
 
         self.points_rw.clear()
+        self.left_slider.config(state=tk.DISABLED)
+        self.right_slider.config(state=tk.DISABLED)
 
 
 
@@ -303,6 +414,8 @@ class CrossSectionApp:
         extent = load_global_extent(self.selected_camera) or trans["extent"]
 
         self.ax.clear()
+        self.xs_line = None
+        self.preview_line = None
         self.ax.imshow(trans["transformed_img"], extent=trans["extent"])
         # Custom axis limits if porvided
         if self.custom_xlim is not None:
@@ -339,6 +452,74 @@ class CrossSectionApp:
             "motion_notify_event",
             self._on_move
         )
+
+        prev_xs = find_previous_xs(
+            self.selected_camera,
+            self.selected_date,
+            self.selected_time
+        )
+        
+        if prev_xs is not None:
+        
+            try:
+        
+                pts = []
+        
+                with prev_xs.open() as f:
+                    for r in csv.reader(f):
+                        pts.append(
+                            (float(r[0]), float(r[1]))
+                        )
+        
+                if len(pts) == 2:
+        
+                    self.points_rw = pts
+        
+                    (x1, y1), (x2, y2) = pts
+        
+                    self.xs_line, = self.ax.plot(
+                        [x1, x2],
+                        [y1, y2],
+                        color="black",
+                        linewidth=2
+                    )
+        
+                            
+                    self.left_slider.config(state=tk.NORMAL)
+                    self.right_slider.config(state=tk.NORMAL)
+        
+                    self.left_slider.configure(
+                        from_=x1 - 10,
+                        to=x1 + 10
+                    )
+                    
+                    self.right_slider.configure(
+                        from_=x2 - 10,
+                        to=x2 + 10
+                    )
+        
+                    self._loading_sliders = True
+                    
+                    self.left_slider.set(x1)
+                    self.right_slider.set(x2)
+                    
+                    self._loading_sliders = False
+        
+                    if self.cid_move is not None:
+                        self.canvas.mpl_disconnect(self.cid_move)
+        
+                    if hasattr(self, "cid"):
+                        self.canvas.mpl_disconnect(self.cid)
+        
+                    print(
+                        f"[INFO] Loaded previous XS: {prev_xs.name}"
+                    )
+        
+            except Exception as e:
+        
+                print(
+                    f"[WARN] Could not load previous XS: {e}"
+                )
         
         self.fig_canvas.draw_idle()
 
@@ -402,6 +583,10 @@ class CrossSectionApp:
         if self.preview_line is not None:
             self.preview_line.remove()
             self.preview_line = None
+
+        if self.xs_line is not None:
+            self.xs_line.remove()
+            self.xs_line = None
     
         self.load_ortho()
 
