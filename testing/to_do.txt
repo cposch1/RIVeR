@@ -2,11 +2,12 @@ TO DO:
 
 
 ---------------------------------------------------------------------------
-fix a03b json input
-	- local mode: json not really needed, just retrieves cam/date/time. Rather let enter cam/date/time and check whether GCP img coordinte file exists
-	- abs mode: json not needed at all, change to cam input
+a03b
+	- now dyn is only processing days&times of a day where a daily gcp img coordinate file exist
+	- let it process for the subsequent days until a new img gcp is there
 
-model evolution of 4 GCPS from Point 5 (and/or PDH)
+new script?
+	- add visual line in the first frame of the videos for later use (location and orientation) in Hydro-STIV
 ---------------------------------------------------------------------------
 
 
@@ -14,6 +15,12 @@ model evolution of 4 GCPS from Point 5 (and/or PDH)
 ---------------------------------------------------------------------------
 think about using cross-section selection only once a day
 make all scripts run on the server
+account for sources of uncertainty from orthrorectification
+	- from defishing
+	- gcp img coordinate selection (human)
+	- gcp modelling (error from lin. regression)
+	- from orthorectification itself (i.e. metrics in RIVeR?)
+	- wobbling of camera
 ---------------------------------------------------------------------------
 
 
@@ -24,5 +31,5 @@ fixes for piv needed:
 - issues with too small aois
 - all-NaN values issue
 
-----> explore other methods
+----> STIV is the way to go
 ---------------------------------------------------------------------------

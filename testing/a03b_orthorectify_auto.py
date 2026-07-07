@@ -426,12 +426,45 @@ def main():
     clip_extent = display_extent
 
     # ✅ output dirs
-    full_dir = rect_dir / cam / "auto_orthorectification_imgs"
-    clean_dir = rect_dir / cam / "auto_ortho_imgs"
-    tif_dir = rect_dir / cam / "auto_ortho_tifs"
+    if args.all_frames:
+    
+        output_root = (
+            rect_dir
+            / cam
+            / "frame_output"
+        )
+    
+    else:
+    
+        output_root = (
+            rect_dir
+            / cam
+        )
+    
+    full_dir = (
+        output_root
+        / "auto_orthorectification_imgs"
+    )
+    
+    clean_dir = (
+        output_root
+        / "auto_ortho_imgs"
+    )
+    
+    tif_dir = (
+        output_root
+        / "auto_ortho_tifs"
+    )
+    
+    transforms_dir = (
+        output_root
+        / "transforms"
+    )
+
     full_dir.mkdir(parents=True, exist_ok=True)
     clean_dir.mkdir(parents=True, exist_ok=True)
     tif_dir.mkdir(parents=True, exist_ok=True)
+    transforms_dir.mkdir(parents=True, exist_ok=True)
 
 
     # ✅ reference GCPs
@@ -455,28 +488,31 @@ def main():
 
         frame_path = Path(row["frame_path"])
         frame_stem = frame_path.stem
-        print(frame_path.name)
-        
-        transf_file = (rect_dir/ cam/ "transforms"/ date/ f"{cam}_transform_{date}_{time_}.json")
+        print(frame_path.name)     
 
-    
-        # ----------------------------------------------------------
-        # Skip already processed scenes unless --overwrite is used
-        # ----------------------------------------------------------
   
-        full_png = (
-            full_dir
-            / date
-            / time_
-            / f"{frame_stem}_orthorect.png"
-        )
+        # ----------------------------------------------------------
+        # Output architecture
+        # ----------------------------------------------------------
         
-        clean_png = (
-            clean_dir
-            / date
-            / time_
-            / f"{frame_stem}_orthoimg.png"
-        )
+        if args.all_frames:
+            full_png = (full_dir/ date/ time_/ f"{frame_stem}_orthorect.png")
+            clean_png = (clean_dir/ date/ time_/ f"{frame_stem}_orthoimg.png")
+            transf_file = (transforms_dir/  date/ time_/ f"{frame_stem}_transform.json")
+        
+            if abs_mod:
+                ortho_tif = (tif_dir/ date/ time_/ f"{frame_stem}_orthotif.tif")
+        
+        else:
+            full_png = (full_dir/ f"{cam}_orthorect_{date}_{time_}.png")
+            clean_png = (clean_dir/ f"{cam}_orthoimg_{date}_{time_}.png")
+            transf_file = (transforms_dir/ f"{cam}_transform_{date}_{time_}.json")
+        
+            if abs_mod:
+                ortho_tif = (
+                    tif_dir
+                    / f"{cam}_orthotif_{date}_{time_}.tif"
+                )
 
         
         full_png.parent.mkdir(
@@ -493,31 +529,24 @@ def main():
             parents=True,
             exist_ok=True
         )
-    
+        
         outputs_exist = (
             full_png.exists()
             and clean_png.exists()
         )
         
+        
         if abs_mod:
-            ortho_tif = (
-                tif_dir
-                / date
-                / time_
-                / f"{frame_stem}_orthotif.tif"
-            )
-
-            
             ortho_tif.parent.mkdir(
-                    parents=True,
-                    exist_ok=True
-                )
-
+                parents=True,
+                exist_ok=True
+            )
         
             outputs_exist = (
                 outputs_exist
                 and ortho_tif.exists()
             )
+
     
         if outputs_exist and not args.overwrite:
     
