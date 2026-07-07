@@ -38,6 +38,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 
+import matplotlib.image as mpimg
+
+from river.core.coordinate_transform import (
+    transform_real_world_to_pixel
+)
+
+
 # ------------------------------------------------------------
 # Argument parsing
 # ------------------------------------------------------------
@@ -84,8 +91,8 @@ def xs_coord_path(cam, date, time_):
     return bathy_dir / cam / f"{cam}_xs_coord_{date}_{time_}.csv"
 
 
-def xs_img_path(cam, date, time_):
-    out_dir_img = bathy_dir / cam / "xs_imgs"
+def xs_img_path(cam, date, time_, view="ortho"):
+    out_dir_img = bathy_dir / cam / "xs_imgs" / view
     out_dir_img.mkdir(parents=True, exist_ok=True)
     return out_dir_img / f"{cam}_xs_{date}_{time_}.png"
 
@@ -104,13 +111,16 @@ def gcps_exist(cam, date, time_):
 
 
 def transform_exists(cam, date, time_):
-    p = rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
-    return p.exists()
+    return gcps_exist(cam, date, time_)[0]
 
 
 def xs_exists(cam, date, time_):
     p = bathy_dir / cam / f"{cam}_xs_coord_{date}_{time_}.csv"
     return p.exists()
+
+    
+def find_reference_frame(row):
+    return Path(row["frame_path"]).parent / "0000000000.jpg"
 
 
 # ------------------------------------------------------------
@@ -131,6 +141,9 @@ class CrossSectionApp:
         self.selected_time = None
 
         self.points_rw: List[Tuple[float, float]] = []
+
+        self.cid_move = None
+        self.preview_line = None
 
         self.fig, self.ax = plt.subplots(figsize=(9, 6))
         self.canvas = self.fig.canvas
@@ -226,10 +239,35 @@ class CrossSectionApp:
             return
         self.selected_time = self.lb_time.get(sel[0])
 
+    def _on_move(self, event):
+        if len(self.points_rw) != 1:
+            return
+    
+        if event.inaxes is not self.ax:
+            return
+    
+        x1, y1 = self.points_rw[0]
+        x2 = event.xdata
+    
+        if self.preview_line is not None:
+            self.preview_line.remove()
+    
+        self.preview_line, = self.ax.plot(
+            [x1, x2],
+            [y1, y1],
+            "--",
+            color="cyan",
+            linewidth=1
+        )
+    
+        self.fig_canvas.draw_idle()
+
     # ---------------- Core ----------------
     def load_ortho(self):
 
         self.points_rw.clear()
+
+
 
         if not (self.selected_camera and self.selected_date and self.selected_time):
             messagebox.showwarning("Selection", "Select camera, date, time")
@@ -255,10 +293,13 @@ class CrossSectionApp:
                 self.selected_date,
                 self.selected_time
             )
+        
+            self.trans = trans
+        
         except Exception as e:
             messagebox.showerror("Transform failed", str(e))
             return
-
+        
         extent = load_global_extent(self.selected_camera) or trans["extent"]
 
         self.ax.clear()
@@ -293,24 +334,75 @@ class CrossSectionApp:
         self.ax.set_title("Click LEFT bank then RIGHT bank")
 
         self.cid = self.canvas.mpl_connect("button_press_event", self._on_click)
+
+        self.cid_move = self.canvas.mpl_connect(
+            "motion_notify_event",
+            self._on_move
+        )
+        
         self.fig_canvas.draw_idle()
 
     def _on_click(self, event):
+
         if event.inaxes is not self.ax:
             return
-
-        self.points_rw.append((event.xdata, event.ydata))
-        self.ax.plot(event.xdata, event.ydata, "o", markersize=4)
-
-        if len(self.points_rw) == 2:
-            (x1, y1), (x2, y2) = self.points_rw
-            self.ax.plot([x1, x2], [y1, y2], linewidth=2)
+    
+        # first click
+        if len(self.points_rw) == 0:
+    
+            self.points_rw.append(
+                (event.xdata, event.ydata)
+            )
+    
+            self.ax.plot(
+                event.xdata,
+                event.ydata,
+                "ro",
+                markersize=4
+            )
+    
+        # second click
+        elif len(self.points_rw) == 1:
+    
+            x1, y1 = self.points_rw[0]
+    
+            x2 = event.xdata
+            y2 = y1
+    
+            self.points_rw.append((x2, y2))
+    
+            if self.preview_line is not None:
+                self.preview_line.remove()
+                self.preview_line = None
+    
+            self.ax.plot(
+                [x1, x2],
+                [y1, y2],
+                color="#F5BF61",
+                linewidth=2
+            )
+    
+            self.ax.plot(
+                x2,
+                y2,
+                "ro",
+                markersize=4
+            )
+    
             self.canvas.mpl_disconnect(self.cid)
-
+    
+            if self.cid_move is not None:
+                self.canvas.mpl_disconnect(self.cid_move)
+    
         self.fig_canvas.draw_idle()
 
     def reset_points(self):
         self.points_rw.clear()
+    
+        if self.preview_line is not None:
+            self.preview_line.remove()
+            self.preview_line = None
+    
         self.load_ortho()
 
     def save_xs(self):
@@ -320,6 +412,29 @@ class CrossSectionApp:
 
         p = xs_coord_path(self.selected_camera, self.selected_date, self.selected_time)
         p.parent.mkdir(parents=True, exist_ok=True)
+
+        # Oblique imagery
+        row = self.df_frames[
+            (self.df_frames.camera == self.selected_camera)
+            & (self.df_frames.date_yyyymmdd == self.selected_date)
+            & (self.df_frames.time_hhmmss == self.selected_time)
+        ].iloc[0]
+        
+        frame_path = find_reference_frame(row)
+        
+        if not hasattr(self, "trans"):
+            messagebox.showerror(
+                "Missing transform",
+                "Please load the orthorectified image first."
+            )
+            return
+              
+        T = np.array(self.trans["transformation_matrix"])
+        
+        (x1, y1), (x2, y2) = self.points_rw
+        
+        left_px = transform_real_world_to_pixel(x1, y1, T)
+        right_px = transform_real_world_to_pixel(x2, y2, T)
 
         
         # Check overwrite
@@ -340,8 +455,58 @@ class CrossSectionApp:
             for x, y in self.points_rw:
                 writer.writerow([f"{x:.15f}", f"{y:.15f}"])
 
-        img_p = xs_img_path(self.selected_camera, self.selected_date, self.selected_time)
-        self.fig.savefig(img_p, dpi=150)
+        img_p = xs_img_path(
+            self.selected_camera,
+            self.selected_date,
+            self.selected_time,
+            view="ortho"
+        )
+        
+        self.fig.savefig(img_p, dpi=300)
+        
+        print("[DEBUG] Saving oblique image")
+        print(frame_path)
+
+
+        if frame_path.exists():
+
+            frame = mpimg.imread(frame_path)
+        
+            fig2, ax2 = plt.subplots(figsize=(12, 8))
+        
+            ax2.imshow(frame)
+        
+            ax2.plot(
+                [left_px[0], right_px[0]],
+                [left_px[1], right_px[1]],
+                color="#F5BF61",
+                linewidth=2
+            )
+        
+            ax2.scatter(
+                [left_px[0], right_px[0]],
+                [left_px[1], right_px[1]],
+                color="red",
+                s=20
+            )
+        
+            ax2.axis("off")
+        
+            oblique_img = xs_img_path(
+                self.selected_camera,
+                self.selected_date,
+                self.selected_time,
+                view="oblique"
+            )
+        
+            fig2.savefig(
+                oblique_img,
+                dpi=300,
+                bbox_inches="tight",
+                pad_inches=0
+            )
+        
+            plt.close(fig2)
 
         messagebox.showinfo("Saved", f"Cross-section saved:\n{p}")
 
