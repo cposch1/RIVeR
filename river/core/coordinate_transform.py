@@ -211,6 +211,7 @@ def orthorectify_image_with_size_limit(
 
 	# Ensure resolution doesn't go below minimum allowed
 	output_resolution = max(output_resolution, min_resolution)
+	output_resolution = 0.1
 
 	# Calculate output dimensions based on resolution
 	x_size = int(x_range / output_resolution)
