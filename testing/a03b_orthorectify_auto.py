@@ -91,7 +91,8 @@ def transform_single_frame(
     gcp_cam,
     gcp_date,
     gcp_time,
-    absolute_coords=False
+    absolute_coords=False,
+    extent_override=None,
 ):
     """
     Orthorectify a specific frame instead of forcing
@@ -144,7 +145,8 @@ def transform_single_frame(
                 north1=north1,
                 east2=east2,
                 north2=north2,
-                enforce_d12=False
+                enforce_d12=False,
+                extent_override=extent_override,
             )
         )
 
@@ -162,7 +164,8 @@ def transform_single_frame(
                 d41,
                 d13,
                 d24,
-                image_path=str(frame_path)
+                image_path=str(frame_path),
+                extent_override=extent_override,
             )
         )
 
@@ -638,7 +641,8 @@ def main():
                 cam,
                 date,
                 time_,
-                absolute_coords=abs_mod
+                absolute_coords=abs_mod,
+                extent_override=display_extent,
             )
             
             with transf_file.open("w") as f:

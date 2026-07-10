@@ -144,6 +144,7 @@ def orthorectify_image_with_size_limit(
 	min_resolution: float = 0.01,
 	flip_x: bool = False,
 	flip_y: bool = False,
+	extent_override=None,
 ) -> Tuple[np.ndarray, List[float]]:
 	"""
 	Transform an input image using a transformation matrix with a specified ROI,
@@ -186,11 +187,14 @@ def orthorectify_image_with_size_limit(
 	rw_y_coords = [corner[1] for corner in real_world_corners]
 
 	# Determine real-world extent
-	x_min_rw, x_max_rw = min(rw_x_coords), max(rw_x_coords)
-	y_min_rw, y_max_rw = min(rw_y_coords), max(rw_y_coords)
+	if extent_override is not None:
+		x_min_rw, x_max_rw, y_min_rw, y_max_rw = extent_override
+	else:
+		x_min_rw, x_max_rw = min(rw_x_coords), max(rw_x_coords)
+		y_min_rw, y_max_rw = min(rw_y_coords), max(rw_y_coords)
 
 	# Add small margin
-	margin = 0.05  # 5% margin
+	margin = 0  # 5% margin
 	x_range = x_max_rw - x_min_rw
 	y_range = y_max_rw - y_min_rw
 	x_min_rw -= margin * x_range
@@ -206,12 +210,18 @@ def orthorectify_image_with_size_limit(
 	x_resolution = x_range / max_dimension
 	y_resolution = y_range / max_dimension
 
+	print("\nREAL WORLD CORNERS")
+	for c in real_world_corners:
+    		print(c)
+	print("x_range",x_max_rw - x_min_rw)
+	print("y_range",y_max_rw - y_min_rw)
+
 	# Use the larger resolution to ensure neither dimension exceeds max_dimension
 	output_resolution = max(x_resolution, y_resolution)
 
 	# Ensure resolution doesn't go below minimum allowed
 	output_resolution = max(output_resolution, min_resolution)
-	output_resolution = 0.1
+	#output_resolution = 1
 
 	# Calculate output dimensions based on resolution
 	x_size = int(x_range / output_resolution)
@@ -814,6 +824,7 @@ def oblique_view_transformation_matrix(
 	north2: Optional[float] = None,
 	enforce_d12: bool = True,
 	distance_tolerance: float = 1e-6,
+	extent_override=None,
 ) -> dict:
 	"""
 	Calculate homography from real-world to pixel coordinates, ROI, and optionally
@@ -919,6 +930,7 @@ def oblique_view_transformation_matrix(
 			roi=roi_for_ortho,
 			max_dimension=max_dimension,
 			min_resolution=min_resolution,
+			extent_override=extent_override,
 			flip_x=flip_x,
 			flip_y=flip_y,
 		)
