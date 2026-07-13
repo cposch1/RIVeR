@@ -68,7 +68,7 @@ def xs_coord_path(cam, date, time_):
 
 
 def transform_path(cam, date, time_):
-    return rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
+    return rect_dir / cam / "transforms" / f"{cam}_transform_{date}_{time_}.json"
 
 
 def xs_json_path(cam, date, time_):
@@ -138,6 +138,10 @@ def main():
     df_unique = df.drop_duplicates(
         ["camera", "date_yyyymmdd", "time_hhmmss"]
     )
+
+    print("Rows in index:", len(df))
+    print("Unique scenes:", len(df_unique))
+    print(df_unique[["camera", "date_yyyymmdd", "time_hhmmss"]].head())
 
     max_xs_length_dict = get_max_xs_length_per_camera()
 
@@ -231,7 +235,7 @@ def main():
             xM = length / 2
 
             def bath(x):
-                return lvl * (x - xM)**2 / ((xL - xM) * (xR - xM)) * (-1)
+                return (lvl * (x - xM)**2 / ((xL - xM) * (xR - xM)) * (-1)) - lvl
 
             bath_points = [(float(x), float(bath(x))) for x in xs]
 
