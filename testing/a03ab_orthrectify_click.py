@@ -184,15 +184,7 @@ def calc_distances_world(gcp_cam: str) -> Dict[str, float]:
 
 def transform_json_path(cam: str, date: str, time_: str) -> Path:
     """Path to the transformation JSON for this (camera, date, time)."""
-    return rect_dir / cam / f"{cam}_transform_{date}_{time_}.json"
-
-
-def global_extent_path(cam: str, absolute_mode: bool) -> Path:
-
-    if absolute_mode:
-        return rect_dir / cam / f"{cam}_global_extent_epsg32623.json"
-
-    return rect_dir / cam / f"{cam}_global_extent_local.json"
+    return rect_dir / cam / "transforms" / f"{cam}_transform_{date}_{time_}.json"
 
 
 # ---------------------------
@@ -334,8 +326,6 @@ class OrthoApp:
         self.custom_xlim = xlim
         self.custom_ylim = ylim
 
-        self.global_extent: Optional[Tuple[float, float, float, float]] = None
-
         self.master.title("RIVeR-ICE Orthorectification")
         self.master.geometry("1280x820")
 
@@ -419,11 +409,14 @@ class OrthoApp:
 
         # Local/absolute coord check
         self.use_absolute_coords = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        self.epsg_checkbox = ttk.Checkbutton(
             btns,
             text="Use EPSG:32623\n(enables GEOTIF export)",
-            variable=self.use_absolute_coords
-        ).pack(side=tk.LEFT, padx=(10, 0))
+            variable=self.use_absolute_coords,
+            command=self._update_extent_widgets
+        )
+        
+        self.epsg_checkbox.pack(side=tk.LEFT, padx=(10, 0))
 
         # Display buffer
         ttk.Label(btns, text="Image display and export extent\nbuffer around GCPs (m):").pack(side=tk.LEFT, padx=(15, 2))
@@ -456,6 +449,8 @@ class OrthoApp:
         if self._use_manual_extent():
             self.buffer_entry.configure(state="disabled")
             self.clip_entry.configure(state="disabled")
+        else:
+            self._update_extent_widgets()
 
         # Contrast enhancement
         ttk.Label(btns, text="CLAHE\n(contrast enhancement)").pack(side=tk.LEFT, padx=(15, 2))
@@ -599,9 +594,6 @@ class OrthoApp:
             return
             
         self.selected_camera = self.lb_camera.get(sel[0])
-
-        self.global_extent = None
-
         self._populate_dates()
         self._clear_points_state(due_to_selection_change=True)
 
@@ -621,6 +613,12 @@ class OrthoApp:
             return
         self.selected_time = self.lb_time.get(sel[0])
         self._clear_points_state(due_to_selection_change=True)
+
+    def _update_extent_widgets(self):
+        state = "normal" if self.use_absolute_coords.get() else "disabled"
+    
+        self.buffer_entry.configure(state=state)
+        self.clip_entry.configure(state=state)
 
     # ---- Core actions ----
 
@@ -866,25 +864,43 @@ class OrthoApp:
 
         # ---- Run transform
         try:
-            
+        
+            buffer_m = self.buffer_var.get()
+        
+            if self.use_absolute_coords.get():
+                gcps = load_gcps_real(cam)
+        
+                xs = [coord[0] for coord in gcps.values()]
+                ys = [coord[1] for coord in gcps.values()]
+        
+                display_extent = (
+                    min(xs) - buffer_m,
+                    max(xs) + buffer_m,
+                    min(ys) - buffer_m,
+                    max(ys) + buffer_m
+                )
+        
+            else:
+                display_extent = (
+                    -20,
+                    50,
+                    -10,
+                    20
+                )
+
+        
             transformation = transform(
-                cam,
-                date,
-                time_,
-                self.df_frames,
-                absolute_coords=self.use_absolute_coords.get()
+                gcp_cam=cam,
+                gcp_date=date,
+                gcp_time=time_,
+                df_frames=self.df_frames,
+                absolute_coords=self.use_absolute_coords.get(),
+                extent_override=display_extent
             )
 
+            
             self._transformation = transformation
             self._absolute_mode = self.use_absolute_coords.get()
-
-            
-           
-            print("Extent:")
-            print(transformation["extent"])
-            
-            print("Transformation matrix:")
-            print(np.array(transformation["transformation_matrix"]))
 
 
         except Exception as e:
@@ -952,10 +968,7 @@ class OrthoApp:
         
         # Orthorectified image with overlay
         if 'transformed_img' in transformation and 'extent' in transformation:
-        
-            p = global_extent_path(cam, self._absolute_mode)
-            p.parent.mkdir(parents=True, exist_ok=True)
-        
+              
             xmin, xmax, ymin, ymax = transformation["extent"]
         
             buffer_m = self.buffer_var.get()
@@ -965,35 +978,26 @@ class OrthoApp:
             # CASE 1: Manual extent provided via CLI
             # --------------------------------------------------
             if self._use_manual_extent():
-        
                 display_extent = (
                     self.custom_xlim[0],
                     self.custom_xlim[1],
                     self.custom_ylim[0],
                     self.custom_ylim[1]
                 )
-        
                 clip_extent = display_extent
-        
-                self.global_extent = display_extent
         
             # --------------------------------------------------
             # CASE 2: EPSG mode
             # --------------------------------------------------
             elif self._absolute_mode:
-        
+
+                display_extent = transformation["extent"]
+            
                 gcps = load_gcps_real(cam)
-        
+            
                 xs = [coord[0] for coord in gcps.values()]
                 ys = [coord[1] for coord in gcps.values()]
-        
-                display_extent = (
-                    min(xs) - buffer_m,
-                    max(xs) + buffer_m,
-                    min(ys) - buffer_m,
-                    max(ys) + buffer_m
-                )
-        
+            
                 clip_extent = (
                     min(xs) - clip_m,
                     max(xs) + clip_m,
@@ -1001,50 +1005,13 @@ class OrthoApp:
                     max(ys) + clip_m
                 )
         
-                self.global_extent = display_extent
-        
             # --------------------------------------------------
             # CASE 3: Local coordinates
             # --------------------------------------------------
             else:
-                rw_points = []
-            
-                for x, y in [
-                    (x1_pix, y1_pix),
-                    (x2_pix, y2_pix),
-                    (x3_pix, y3_pix),
-                    (x4_pix, y4_pix)
-                ]:
-                    rw = transform_pixel_to_real_world(
-                        x,
-                        y,
-                        transformation["transformation_matrix"]
-                    )
-                    rw_points.append(rw)
-            
-                rw_points = np.array(rw_points)
-            
-                xs = rw_points[:, 0]
-                ys = rw_points[:, 1]
-            
-                display_extent = (
-                    np.min(xs) - buffer_m,
-                    np.max(xs) + buffer_m,
-                    np.min(ys) - buffer_m,
-                    np.max(ys) + buffer_m
-                )
-            
+                display_extent = transformation["extent"]
                 clip_extent = None
-                self.global_extent = display_extent
                 
-        
-            # Save global extent once
-            if not p.exists():
-                with p.open("w") as f:
-                    json.dump(display_extent, f, indent=2)
-                
-                print(f"[Saved] Global extent: {p}")
-
         
             # ----- draw raster in its TRUE world position -----
             ax2.imshow(
@@ -1130,11 +1097,11 @@ class OrthoApp:
 
         fig.tight_layout()
         print("ABSOLUTE MODE:", self._absolute_mode)
-        print("GLOBAL EXTENT:", self.global_extent)
         print("DISPLAY EXTENT:", display_extent)
         print("TRANSFORMATION EXTENT:", transformation["extent"])
         print("DISPLAY EXTENT:", display_extent)
         print("CLIP EXTENT:", clip_extent)
+        print("IMAGE SHAPE:",transformation["transformed_img"].shape)
 
               
         # Save orthorectification image
