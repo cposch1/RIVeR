@@ -97,12 +97,22 @@ def xs_img_path(cam, date, time_, view="ortho"):
     return out_dir_img / f"{cam}_xs_{date}_{time_}.png"
 
 
-def load_global_extent(cam):
-    p = rect_dir / cam / f"{cam}_global_extent.json"
-    if p.exists():
-        with p.open() as f:
-            return tuple(json.load(f))
-    return None
+def transform_json_path(cam, date, time_):
+    return (
+        rect_dir
+        / cam
+        / "transforms"
+        / f"{cam}_transform_{date}_{time_}.json"
+    )
+
+
+def ortho_img_path(cam, date, time_):
+    return (
+        rect_dir
+        / cam
+        / "ortho_imgs"
+        / f"{cam}_orthoimg_{date}_{time_}.png"
+    )
 
 
 def gcps_exist(cam, date, time_):
@@ -398,11 +408,20 @@ class CrossSectionApp:
             return
 
         try:
+            display_extent = (
+                self.custom_xlim[0],
+                self.custom_xlim[1],
+                self.custom_ylim[0],
+                self.custom_ylim[1]
+            )
+            
             trans = transform(
-                self.df_frames,
-                self.selected_camera,
-                self.selected_date,
-                self.selected_time
+                gcp_cam=self.selected_camera,
+                gcp_date=self.selected_date,
+                gcp_time=self.selected_time,
+                df_frames=self.df_frames,
+                absolute_coords=False,
+                extent_override=display_extent,
             )
         
             self.trans = trans
@@ -411,24 +430,25 @@ class CrossSectionApp:
             messagebox.showerror("Transform failed", str(e))
             return
         
-        extent = load_global_extent(self.selected_camera) or trans["extent"]
+        extent = trans["extent"]
 
         self.ax.clear()
         self.xs_line = None
         self.preview_line = None
-        self.ax.imshow(trans["transformed_img"], extent=trans["extent"])
-        # Custom axis limits if porvided
-        if self.custom_xlim is not None:
-            self.ax.set_xlim(self.custom_xlim[0], self.custom_xlim[1])
-        else:
-            self.ax.set_xlim(extent[0], extent[1])
         
-        if self.custom_ylim is not None:
-            self.ax.set_ylim(self.custom_ylim[0], self.custom_ylim[1])
-        else:
-            self.ax.set_ylim(extent[2], extent[3])
+        self.ax.imshow(
+            trans["transformed_img"],
+            extent=trans["extent"]
+        )
         
+        self.ax.set_xlim(*self.custom_xlim)
+        self.ax.set_ylim(*self.custom_ylim)
         self.ax.set_aspect("equal")
+
+        print("Transform extent:", trans["extent"])
+        print("Current xlim:", self.custom_xlim)
+        print("Current ylim:", self.custom_ylim)
+        print("Image shape:", trans["transformed_img"].shape)
 
 
         # Grid
