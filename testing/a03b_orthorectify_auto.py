@@ -86,90 +86,7 @@ from river.core.coordinate_transform import (
     transform_pixel_to_real_world,
 )
 
-def transform_single_frame(
-    frame_path,
-    gcp_cam,
-    gcp_date,
-    gcp_time,
-    absolute_coords=False,
-    extent_override=None,
-):
-    """
-    Orthorectify a specific frame instead of forcing
-    0000000000.jpg through load_frame().
-    """
-
-    points = load_gcps_img(
-        gcp_cam,
-        gcp_date,
-        gcp_time
-    )
-
-    dist = load_dist(gcp_cam)
-
-    # GCP image coordinates
-    x1_pix, y1_pix = points["point1"]
-    x2_pix, y2_pix = points["point2"]
-    x3_pix, y3_pix = points["point3"]
-    x4_pix, y4_pix = points["point4"]
-
-    # Distances
-    d12 = dist[0]
-    d23 = dist[1]
-    d34 = dist[2]
-    d41 = dist[3]
-    d13 = dist[4]
-    d24 = dist[5]
-
-    if absolute_coords:
-
-        gcps_real = load_gcps_real(gcp_cam)
-
-        east1, north1 = gcps_real["point1"]
-        east2, north2 = gcps_real["point2"]
-
-        transformation = (
-            oblique_view_transformation_matrix(
-                x1_pix, y1_pix,
-                x2_pix, y2_pix,
-                x3_pix, y3_pix,
-                x4_pix, y4_pix,
-                d12,
-                d23,
-                d34,
-                d41,
-                d13,
-                d24,
-                image_path=str(frame_path),
-                east1=east1,
-                north1=north1,
-                east2=east2,
-                north2=north2,
-                enforce_d12=False,
-                extent_override=extent_override,
-            )
-        )
-
-    else:
-
-        transformation = (
-            oblique_view_transformation_matrix(
-                x1_pix, y1_pix,
-                x2_pix, y2_pix,
-                x3_pix, y3_pix,
-                x4_pix, y4_pix,
-                d12,
-                d23,
-                d34,
-                d41,
-                d13,
-                d24,
-                image_path=str(frame_path),
-                extent_override=extent_override,
-            )
-        )
-
-    return transformation
+from river.core.image_rectification import transform
 
 
 # ---------------------------
@@ -328,6 +245,19 @@ def main():
                 "--ref-time required "
                 "when not using --dyn"
             )
+
+    if not args.overwrite:
+        reply = input(
+            "\nExisting outputs will be skipped.\n"
+            "Do you want to overwrite existing outputs? (y/n): "
+        ).strip().lower()
+    
+        if reply in ("y", "yes"):
+            args.overwrite = True
+            print("[INFO] Overwrite enabled.")
+        else:
+            print("[INFO] Existing outputs will be preserved.")
+    
 
     abs_mod = args.abs_coords
     buffer_m = args.buffer
@@ -636,11 +566,11 @@ def main():
                     )
 
             # ---------- TRANSFORM ----------
-            transformation = transform_single_frame(
-                frame_path,
-                cam,
-                date,
-                time_,
+            transformation = transform(
+                gcp_cam=cam,
+                gcp_date=date,
+                gcp_time=time_,
+                frame_path=frame_path,
                 absolute_coords=abs_mod,
                 extent_override=display_extent,
             )

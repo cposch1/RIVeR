@@ -1,13 +1,24 @@
 from river.core.loading_data import (load_frame,load_gcps_img,load_dist,load_gcps_real)
-from river.core.coordinate_transform import oblique_view_transformation_matrix
 from river.core.coordinate_transform import (oblique_view_transformation_matrix,transform_pixel_to_real_world)
 import numpy as np
 
 # Function for performing transformation
-def transform(df_frames,gcp_cam,gcp_date,gcp_time,absolute_coords=False):
+def transform(gcp_cam,gcp_date,gcp_time,df_frames=None,frame_path=None,absolute_coords=False,extent_override=None):
     points = load_gcps_img(gcp_cam,gcp_date,gcp_time)
     dist = load_dist(gcp_cam)
-    _, _, frame_path = load_frame(df_frames,gcp_cam,gcp_date,gcp_time)
+    if frame_path is None:
+
+        if df_frames is None:
+            raise ValueError(
+                "Either frame_path or df_frames must be supplied."
+            )
+
+        _, _, frame_path = load_frame(
+            df_frames,
+            gcp_cam,
+            gcp_date,
+            gcp_time
+        )
     
     # Extract coordinates for transformation
     x1_pix, y1_pix = points['point1']
@@ -49,7 +60,7 @@ def transform(df_frames,gcp_cam,gcp_date,gcp_time,absolute_coords=False):
             north1=north1,
             east2=east2,
             north2=north2,
-            enforce_d12=False
+            enforce_d12=False,extent_override=extent_override,
         )
 
         
@@ -86,7 +97,7 @@ def transform(df_frames,gcp_cam,gcp_date,gcp_time,absolute_coords=False):
             d41,
             d13,
             d24,
-            image_path=frame_path,
+            image_path=frame_path,extent_override=extent_override,
         )
 
     return transformation
