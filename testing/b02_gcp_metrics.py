@@ -22,6 +22,9 @@ from pathlib import Path
 from scipy.stats import linregress
 import os
 
+# %% [markdown]
+# ## Load data for metrics
+
 # %%
 # ==================================================
 # USER SETTINGS
@@ -144,7 +147,7 @@ df_comb = pd.merge(
 # %%
 # Scatter + regression
 
-x_var = "datetime"
+x_var = "5_y"
 y_var = "y"
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 10))
@@ -295,6 +298,12 @@ for i in range(1, 5):
 plt.tight_layout()
 plt.show()
 
+# %% [markdown]
+# # 2. Stake point metrics
+
+# %% [markdown]
+# ## PDD(H) scatter
+
 # %%
 df_m = pd.merge(
     df_stake,
@@ -306,12 +315,6 @@ df_m = pd.merge(
 # %%
 df_m
 
-# %% [markdown]
-# # 2. Stake point metrics
-
-# %% [markdown]
-# ## PDD(H) scatter
-
 # %%
 x_var = "cum_PDD"
 y_var = "5_y"
@@ -320,7 +323,7 @@ x = df_m[x_var]
 y = df_m[y_var]
 
 plt.figure(figsize=(5,5))
-plt.scatter(x, y)
+plt.scatter(x, y, color="blue")
 
 plt.xlabel(x_var)
 plt.ylabel(y_var)
@@ -373,9 +376,12 @@ mod_out = model_dir / "output"
 cam = "ilh-cam1-pt"
 direc = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-07-07_gcp_test_ih132\00_gcps1-5\gcps")
 
+# %% [markdown]
+# ## Load data for lin regression
+
 # %%
 # ==================================================
-# LOAD GCPS DATA (Points 1-4)
+# LOAD pre-surface-hydrology GCPS DATA (Points 1-4)
 # ==================================================
 cam_dir = direc / cam
 records = []
@@ -411,12 +417,10 @@ df_gcps = (
 )
 df_gcps["datetime"] = pd.to_datetime(df_gcps["datetime"]).dt.normalize()
 
-# %%
-df_gcps
 
-# %%
+
 # ==================================================
-# LOAD STAKE POINT DATA (Point 5 only)
+# LOAD pre-surface-hydrology STAKE POINT DATA (Point 5 only)
 # ==================================================
 cam_dir = direc / cam
 records = []
@@ -446,10 +450,11 @@ df_stake = (
 )
 df_stake["datetime"] = pd.to_datetime(df_stake["datetime"]).dt.normalize()
 
-# %%
-df_stake
 
-# %%
+
+# ==================================================
+# COMBINE DFs
+# ==================================================
 df_5gcp = pd.merge(
     df_gcps,
     df_stake,
@@ -458,7 +463,16 @@ df_5gcp = pd.merge(
 )
 
 # %%
+df_gcps
+
+# %%
+df_stake
+
+# %%
 df_5gcp
+
+# %% [markdown]
+# ## Do and export lin regression
 
 # %%
 # define lin regression
@@ -494,6 +508,9 @@ with open(csv_path, "w", encoding="utf-8", newline="") as f:
 
 # %%
 df_lin
+
+# %% [markdown]
+# ## GCP img coordinate modelling
 
 # %%
 # --------------------------------------------------------------
@@ -568,6 +585,9 @@ for stake_file in stake_files:
     )
 
     print(f"Written: {out_file.name}")
+
+# %% [markdown]
+# ## Spatio-temporal scatters of modelled data
 
 # %%
 from pathlib import Path
@@ -851,6 +871,9 @@ for gcp_id in range(1, 5):
 plt.tight_layout()
 plt.show()
 
+# %% [markdown]
+# ## PDD(H) scatters of modelled data
+
 # %%
 from pathlib import Path
 import pandas as pd
@@ -1048,5 +1071,103 @@ for i in range(1, 5):
 
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# # 4. Modelled GCP img coordinates conversion for Hydro-STIV
+
+# %%
+model_dir = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-07-07_gcp_test_ih132\02_gcp_modelling")
+mod_in = model_dir / "input"
+mod_out = model_dir / "output"
+mod_out_stiv = model_dir / "output_stiv"
+
+# %%
+from pathlib import Path
+import pandas as pd
+
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+
+INPUT_REAL = mod_in / "ilh-cam1-pt_gcps_real.csv"
+
+INPUT_IMG_DIR = mod_out
+OUTPUT_DIR = mod_out_stiv
+
+OUTPUT_HEADERS = [
+    "Name",
+    "X(m)",
+    "Y(m)",
+    "Height(m)",
+    "X(pixel)",
+    "Y(pixel)"
+]
+
+HEIGHT_VALUE = 0
+
+# Create output directory if necessary
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ==========================================================
+# READ REAL-WORLD COORDINATES
+# ==========================================================
+
+# No header in input file
+real_df = pd.read_csv(INPUT_REAL, header=None)
+
+# Expecting:
+# column 0 -> X(m)
+# column 1 -> Y(m)
+
+# ==========================================================
+# PROCESS ALL IMAGE FILES
+# ==========================================================
+
+for img_file in INPUT_IMG_DIR.glob("*_img_*.csv"):
+
+    # Skip already processed files
+    if "_img_stiv_" in img_file.name:
+        continue
+
+    # Read image coordinates (no header)
+    img_df = pd.read_csv(img_file, header=None)
+
+    # Sanity check
+    if len(real_df) != len(img_df):
+        print(
+            f"Skipping {img_file.name}: "
+            f"{len(real_df)} real points but "
+            f"{len(img_df)} image points."
+        )
+        continue
+
+    n_points = len(real_df)
+
+    output_df = pd.DataFrame({
+        "Name": [f"No.{i+1}" for i in range(n_points)],
+        "X(m)": real_df.iloc[:, 0],
+        "Y(m)": real_df.iloc[:, 1],
+        "Height(m)": HEIGHT_VALUE,
+        "X(pixel)": img_df.iloc[:, 0],
+        "Y(pixel)": img_df.iloc[:, 1],
+    })
+
+    output_df = output_df[OUTPUT_HEADERS]
+
+    output_name = img_file.name.replace(
+        "_img_",
+        "_img_stiv_"
+    )
+
+    output_file = OUTPUT_DIR / output_name
+
+    output_df.to_csv(
+        output_file,
+        index=False
+    )
+
+    print(f"Created: {output_file.name}")
+
+print("Finished.")
 
 # %%
