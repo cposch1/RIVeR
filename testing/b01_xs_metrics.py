@@ -42,8 +42,6 @@ end_date   = pd.to_datetime("2025-09-01 00:00")
 time_reference = "xs"   # or "pt"
 
 # %%
-
-
 # ==================================================
 # LOAD XS DATA
 # ==================================================
@@ -691,6 +689,223 @@ leg.get_frame().set_alpha(0.5)
 
 plt.tight_layout()
 plt.savefig("scatter_depth_vs_temp.svg", transparent=True)
+plt.show()
+
+# %%
+# ==================================================
+# USER SETTINGS
+# ==================================================
+
+break_date = pd.to_datetime("2025-08-06")
+
+# ==================================================
+# SCATTER PLOT: Channel width vs Air temperature
+# ==================================================
+
+fig, ax = plt.subplots(figsize=(8, 8))
+
+# Transparent background
+fig.patch.set_alpha(0)
+ax.set_facecolor("none")
+
+# --------------------------------------------------
+# Match XS measurements to nearest air temperature
+# --------------------------------------------------
+
+temp_at_xs = kan_u["t_u"].reindex(
+    df_xs["datetime"],
+    method="nearest"
+)
+
+df_combined = df_xs.copy()
+
+df_combined["temp"] = temp_at_xs.to_numpy()
+
+df_combined = df_combined.dropna()
+
+print(df_combined.head())
+print("Rows:", len(df_combined))
+
+# --------------------------------------------------
+# Split before / after break date
+# --------------------------------------------------
+
+df_before = df_combined[
+    df_combined["datetime"] < break_date
+].copy()
+
+df_after = df_combined[
+    df_combined["datetime"] >= break_date
+].copy()
+
+
+# --------------------------------------------------
+# Scatter
+# --------------------------------------------------
+
+ax.scatter(
+    df_before["temp"],
+    df_before["xs_length"],
+    marker="o",
+    facecolors="none",
+    edgecolors="cyan",
+    linewidths=0.8,
+    label=f"Before {break_date.date()}"
+)
+
+ax.scatter(
+    df_after["temp"],
+    df_after["xs_length"],
+    marker="o",
+    facecolors="none",
+    edgecolors="orange",
+    linewidths=0.8,
+    label=f"After {break_date.date()}"
+)
+
+# --------------------------------------------------
+# Date labels
+# --------------------------------------------------
+
+for _, row in df_combined.iterrows():
+
+    label = row["datetime"].strftime("%m-%d")
+
+    ax.annotate(
+        label,
+        (row["temp"], row["xs_length"]),
+        textcoords="offset points",
+        xytext=(3, 3),
+        fontsize=8,
+        color="white"
+    )
+
+# --------------------------------------------------
+# Regression helper
+# --------------------------------------------------
+
+def add_regression(df, color):
+
+    if len(df) < 2:
+        return np.nan, np.nan, np.nan
+
+    x = df["temp"].values
+    y = df["xs_length"].values
+
+    m, b = np.polyfit(x, y, 1)
+
+    r = np.corrcoef(x, y)[0, 1]
+
+    x_line = np.linspace(
+        x.min(),
+        x.max(),
+        100
+    )
+
+    y_line = m * x_line + b
+
+    ax.plot(
+        x_line,
+        y_line,
+        linestyle="--",
+        linewidth=1.5,
+        color=color
+    )
+
+    return m, b, r
+
+# --------------------------------------------------
+# Regressions
+# --------------------------------------------------
+
+m1, b1, r1 = add_regression(
+    df_before,
+    "cyan"
+)
+
+m2, b2, r2 = add_regression(
+    df_after,
+    "orange"
+)
+
+# --------------------------------------------------
+# Regression statistics
+# --------------------------------------------------
+
+stats_text = (
+    f"Before {break_date.date()}\n"
+    f"y = {m1:.3f}x + {b1:.3f}\n"
+    f"r = {r1:.2f}\n\n"
+    f"After {break_date.date()}\n"
+    f"y = {m2:.3f}x + {b2:.3f}\n"
+    f"r = {r2:.2f}"
+)
+
+ax.text(
+    0.05,
+    0.95,
+    stats_text,
+    transform=ax.transAxes,
+    color="white",
+    ha="left",
+    va="top",
+    bbox=dict(
+        facecolor="black",
+        alpha=0.2,
+        edgecolor="white"
+    )
+)
+
+# --------------------------------------------------
+# Axis styling
+# --------------------------------------------------
+
+ax.set_xlabel(
+    "Air temperature (°C)",
+    color="white"
+)
+
+ax.set_ylabel(
+    "Channel width (m)",
+    color="white"
+)
+
+ax.set_box_aspect(1)
+
+ax.tick_params(colors="white")
+
+for spine in ax.spines.values():
+    spine.set_color("white")
+
+ax.grid(
+    True,
+    color="white",
+    alpha=0.2
+)
+
+# --------------------------------------------------
+# Legend
+# --------------------------------------------------
+
+leg = ax.legend()
+
+for text in leg.get_texts():
+    text.set_color("white")
+
+leg.get_frame().set_facecolor("none")
+leg.get_frame().set_alpha(0.5)
+
+# --------------------------------------------------
+# Save
+# --------------------------------------------------
+
+plt.tight_layout()
+
+plt.savefig(
+    "scatter_channel_width_vs_temp.svg",
+    transparent=True
+)
+
 plt.show()
 
 # %%
