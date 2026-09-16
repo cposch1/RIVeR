@@ -258,6 +258,9 @@ plt.savefig("channel-width_pt_1.svg")
 plt.show()
 
 # %%
+df_xs.to_csv("xs_lengths.csv", index=False)
+
+# %%
 from river.config import bathy_dir, pts_dir
 import pandas as pd
 import matplotlib.pyplot as plt
