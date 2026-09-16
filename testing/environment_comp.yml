@@ -1,0 +1,24 @@
+name: velo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - opencv
+  - numpy=1.26.4
+  - scipy
+  - python=3.11.15
+  - matplotlib
+  - tqdm
+  - pandas
+  - ipython
+  - ipywidgets
+  - numba
+  - ipympl
+  - jupytext
+  - pyarrow
+  - rasterio
+  - ca-certificates=2026.2.25
+  - openssl=3.6.1
+  - scikit-image
+  - certifi=2026.2.25
+  - jupyterlab
