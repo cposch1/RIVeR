@@ -2,34 +2,23 @@ TO DO:
 
 
 ---------------------------------------------------------------------------
-a03b
-	- now dyn is only processing days&times of a day where a daily gcp img coordinate file exist
-	- let it process for the subsequent days until a new img gcp is there
-
-new script?
-	- add visual line in the first frame of the videos for later use (location and orientation) in Hydro-STIV
+perform and use actual good fix of hydro gcp points
+	- estimate migration until July from other stations?
+	- but for the sake of analysis then continue with a fixed position
+rerun all orthorectification steps
+	- based on new defished data (ih130)
+	- based on good gcp fixes
+clean up scripts in git rep
 ---------------------------------------------------------------------------
 
 
 
 ---------------------------------------------------------------------------
 think about using cross-section selection only once a day
-make all scripts run on the server
 account for sources of uncertainty from orthrorectification
 	- from defishing
 	- gcp img coordinate selection (human)
 	- gcp modelling (error from lin. regression)
 	- from orthorectification itself (i.e. metrics in RIVeR?)
 	- wobbling of camera
----------------------------------------------------------------------------
-
-
----------------------------------------------------------------------------
-fixes for piv needed:
-- output not confident
-- issues with negative aois?
-- issues with too small aois
-- all-NaN values issue
-
-----> STIV is the way to go
 ---------------------------------------------------------------------------
