@@ -6,6 +6,12 @@ import argparse
 
 
 def extract_timestamp(path: Path) -> str:
+    """
+    Extract YYYYMMDD_HHMMSS from filenames like:
+
+    ilh-cam1_20250723_040000.jpg
+    ilh-cam2_20250723_040000.jpg
+    """
     parts = path.stem.split("_")
     return "_".join(parts[-2:])
 
@@ -13,8 +19,14 @@ def extract_timestamp(path: Path) -> str:
 def combine_folders(
     folder1: Path,
     folder2: Path,
-    out_name: str = "ilh-cams"
-):
+) -> None:
+
+    # Derive site name automatically:
+    # ilh-cam1*  -> ilh
+    # lev5-cam2* -> lev5
+    prefix = folder1.name.split("-cam")[0]
+
+    out_name = f"{prefix}-cams"
 
     out_dir = folder1.parent / f"{out_name}_comb"
     out_dir.mkdir(exist_ok=True)
@@ -40,6 +52,7 @@ def combine_folders(
         img1 = Image.open(files1[ts]).convert("RGB")
         img2 = Image.open(files2[ts]).convert("RGB")
 
+        # Match heights
         height = max(img1.height, img2.height)
 
         if img1.height != height:
@@ -61,7 +74,10 @@ def combine_folders(
 
         outfile = out_dir / f"{out_name}_{ts}.jpg"
 
-        combined.save(outfile, quality=95)
+        combined.save(
+            outfile,
+            quality=95,
+        )
 
         print(f"Saved {outfile.name}")
 
@@ -71,7 +87,12 @@ def combine_folders(
 
 def main():
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=(
+            "Combine two flattened camera image folders "
+            "side-by-side using matching timestamps."
+        )
+    )
 
     parser.add_argument(
         "folder1",

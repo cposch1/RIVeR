@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-REMOTE_BASE="/home/cposch/RIVeR/testing/data/frames/ilh-cam1-pt"
-LOCAL_BASE="/c/Users/cposch1/Desktop/ilh-cam1-pt"
+REMOTE_BASE="/home/cposch/RIVeR/testing/data/frames/lev5-cam1-pt"
+LOCAL_BASE="/c/Users/cposch1/Desktop/lev5-cam1-pt"
 SSH="cposch@octopus.unil.ch"
 
 # Find all time directories (date/time level)
