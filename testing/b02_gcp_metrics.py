@@ -14,6 +14,7 @@
 # ---
 
 # %%
+from river.config import gcps_dir
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,6 +22,7 @@ import matplotlib.dates as mdates
 from pathlib import Path
 from scipy.stats import linregress
 import os
+import shutil
 
 # %% [markdown]
 # ## Load data for metrics
@@ -31,8 +33,8 @@ import os
 # ==================================================
 
 cam = "ilh-cam1-pt"
-direc = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-07-07_gcp_test_ih132\00_gcps1-5\gcps")
-temp_dat = 'KAN_U_hour_new.csv'
+direc = gcps_dir
+temp_dat = direc / 'KAN_U_hour_new.csv'
 start_date = pd.to_datetime("2025-07-01 00:00")
 end_date   = pd.to_datetime("2025-07-25 00:00")
 
@@ -79,7 +81,6 @@ df_gcps["datetime"] = pd.to_datetime(df_gcps["datetime"]).dt.normalize()
 # LOAD STAKE POINT DATA (Point 5 only)
 # ==================================================
 
-cam_dir = direc / cam
 records = []
 
 for f in sorted(cam_dir.glob(f"{cam}_stake_point_*.csv")):
@@ -119,12 +120,23 @@ df_kanu = (
 )
 
 df_kanu["datetime"] = pd.to_datetime(df_kanu["datetime"])
-df_kanu["PDD"] = df_kanu["t_u"].clip(lower=0)
-df_kanu["cum_PDD"] = (
+df_kanu["PDH"] = df_kanu["t_u"].clip(lower=0)
+df_kanu["cum_PDH"] = (
     df_kanu["t_u"]
     .clip(lower=0)
     .fillna(0)
     .cumsum()
+)
+
+# Aggregate hourly temperature data to one row per day
+df_kanu_daily = (
+    df_kanu
+    .assign(datetime=df_kanu["datetime"].dt.normalize())
+    .groupby("datetime", as_index=False)
+    .agg(
+        PDH=("PDH", "sum"),
+        cum_PDH=("cum_PDH", "last"),
+    )
 )
 
 
@@ -133,7 +145,7 @@ df_kanu["cum_PDD"] = (
 # ==================================================
 df_comb = pd.merge(
     df_gcps,
-    df_kanu,
+    df_kanu_daily,
     on="datetime",
     how="inner"
 )
@@ -232,12 +244,15 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## PDD(H) scatter
+# ## PDH scatter
+
+# %%
+df_comb
 
 # %%
 # Scatter + regression
 
-x_var = "cum_PDD"
+x_var = "cum_PDH"
 y_var = "y"
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 10))
@@ -302,12 +317,12 @@ plt.show()
 # # 2. Stake point metrics
 
 # %% [markdown]
-# ## PDD(H) scatter
+# ## PDH scatter
 
 # %%
 df_m = pd.merge(
     df_stake,
-    df_kanu,
+    df_kanu_daily,
     on="datetime",
     how="inner"
 )
@@ -316,7 +331,7 @@ df_m = pd.merge(
 df_m
 
 # %%
-x_var = "cum_PDD"
+x_var = "cum_PDH"
 y_var = "5_y"
 
 x = df_m[x_var]
@@ -369,12 +384,16 @@ plt.show()
 # # 3. Modell GCP img coordinates
 
 # %%
-model_dir = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-07-07_gcp_test_ih132\02_gcp_modelling")
+model_dir = cam_dir / "_modelling"
+Path(model_dir).mkdir(parents=True, exist_ok=True)
 mod_in = model_dir / "input"
+Path(mod_in).mkdir(parents=True, exist_ok=True)
 mod_out = model_dir / "output"
+Path(mod_out).mkdir(parents=True, exist_ok=True)
 
-cam = "ilh-cam1-pt"
-direc = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-07-07_gcp_test_ih132\00_gcps1-5\gcps")
+# %%
+for csv_file in cam_dir.glob("*.csv"):
+    shutil.copy(csv_file, mod_in / csv_file.name)
 
 # %% [markdown]
 # ## Load data for lin regression
@@ -383,10 +402,9 @@ direc = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1
 # ==================================================
 # LOAD pre-surface-hydrology GCPS DATA (Points 1-4)
 # ==================================================
-cam_dir = direc / cam
 records = []
 
-for f in sorted(cam_dir.glob(f"{cam}_gcps_img_*.csv")):
+for f in sorted(mod_in.glob(f"{cam}_gcps_img_*.csv")):
 
     try:
         timestamp = f.stem.split("_")[-2] + "_" + f.stem.split("_")[-1]
@@ -422,10 +440,9 @@ df_gcps["datetime"] = pd.to_datetime(df_gcps["datetime"]).dt.normalize()
 # ==================================================
 # LOAD pre-surface-hydrology STAKE POINT DATA (Point 5 only)
 # ==================================================
-cam_dir = direc / cam
 records = []
 
-for f in sorted(cam_dir.glob(f"{cam}_stake_point_*.csv")):
+for f in sorted(mod_in.glob(f"{cam}_stake_point_*.csv")):
 
     try:
         timestamp = f.stem.split("_")[-2] + "_" + f.stem.split("_")[-1]
@@ -872,7 +889,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## PDD(H) scatters of modelled data
+# ## PDH scatters of modelled data
 
 # %%
 from pathlib import Path
@@ -938,7 +955,6 @@ print(df_gcps_mod.head())
 # LOAD TEMPERATURE DATA
 # =====================================================
 
-temp_dat = 'KAN_U_hour_new.csv'
 kan_u = pd.read_csv(
     temp_dat,
     index_col=0
@@ -956,29 +972,40 @@ df_kanu.columns = [
 
 df_kanu["datetime"] = pd.to_datetime(
     df_kanu["datetime"]
-).dt.normalize()
+)
 
-df_kanu["PDD"] = (
+df_kanu["PDH"] = (
     df_kanu["t_u"]
     .clip(lower=0)
 )
 
-df_kanu["cum_PDD"] = (
+df_kanu["cum_PDH"] = (
     df_kanu["t_u"]
     .clip(lower=0)
     .fillna(0)
     .cumsum()
 )
 
-print(df_kanu.head())
+# Aggregate hourly temperature data to one row per day
+df_kanu_daily = (
+    df_kanu
+    .assign(datetime=df_kanu["datetime"].dt.normalize())
+    .groupby("datetime", as_index=False)
+    .agg(
+        PDH=("PDH", "sum"),
+        cum_PDH=("cum_PDH", "last"),
+    )
+)
+
+print(df_kanu_daily.head())
 
 # =====================================================
-# MERGE MODELLED GCPS AND PDD DATA
+# MERGE MODELLED GCPS AND PDH DATA
 # =====================================================
 
 df_comb_mod = pd.merge(
     df_gcps_mod,
-    df_kanu,
+    df_kanu_daily,
     on="datetime",
     how="inner"
 )
@@ -990,7 +1017,7 @@ print(df_comb_mod.head())
 # SCATTER + REGRESSION
 # =====================================================
 
-x_var = "cum_PDD"
+x_var = "cum_PDH"
 y_var = "y"
 
 fig, axes = plt.subplots(
@@ -1076,10 +1103,8 @@ plt.show()
 # # 4. Modelled GCP img coordinates conversion for Hydro-STIV
 
 # %%
-model_dir = Path(r"C:\Users\cposch1\OneDrive - Université de Lausanne\FlowState\ch1_hydro\RIVeR\trial_res_2026-07-07_gcp_test_ih132\02_gcp_modelling")
-mod_in = model_dir / "input"
-mod_out = model_dir / "output"
 mod_out_stiv = model_dir / "output_stiv"
+Path(mod_out_stiv).mkdir(parents=True, exist_ok=True)
 
 # %%
 from pathlib import Path
