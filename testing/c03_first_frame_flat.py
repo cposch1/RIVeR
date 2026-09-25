@@ -142,25 +142,61 @@ def confirm(question: str) -> bool:
         return False
 
 
+DATE_RE = re.compile(r"^\d{8}$")
+TIME_RE = re.compile(r"^\d{6}$")
+
+
+def is_camera_dir(path: Path) -> bool:
+    """A camera folder holds YYYYMMDD date folders."""
+    return any(
+        p.is_dir() and DATE_RE.match(p.name)
+        for p in path.iterdir()
+    )
+
+
+def find_camera_dirs(root: Path) -> list:
+    """All camera folders at any depth below (or equal to) root."""
+    cameras = []
+    for dirpath, dirnames, _ in os.walk(root):
+        path = Path(dirpath)
+        if is_camera_dir(path):
+            cameras.append(path)
+            dirnames[:] = []  # don't descend into date/time folders
+        else:
+            dirnames.sort()
+    return sorted(cameras)
+
+
+def old_outputs_for(output_dir: Path, camera_name: str) -> list:
+    """Images a previous run wrote for this camera."""
+    if not output_dir.exists():
+        return []
+    return sorted(output_dir.glob(f"{camera_name}_*.jpg"))
+
+
 def collect_frames(
     input_dir: Path,
     full_timeseries=None,
     overwrite: bool = False,
 ) -> None:
     """
-    Expected input structure:
+    Input: a single camera folder, or any folder tree containing camera
+    folders (e.g. site/camera/...):
 
-    camera_name/
-    ├── YYYYMMDD/
-    │   └── HHMMSS/
-    │       └── *.jpg
-    └── ...
+    input/
+    └── ilhh/
+        └── ilh-cam1-pt/
+            └── YYYYMMDD/
+                └── HHMMSS/
+                    └── *.jpg
 
-    Output:
+    Output: next to the input, same tree with only the date and time
+    levels collapsed:
 
-    camera_name_first_frames/
-    ├── camera_name_YYYYMMDD_HHMMSS.jpg
-    └── ...
+    input_flat_frames/
+    └── ilhh/
+        └── ilh-cam1-pt/
+            └── ilh-cam1-pt_YYYYMMDD_HHMMSS.jpg
     """
 
     if not input_dir.exists():
@@ -168,30 +204,55 @@ def collect_frames(
             f"Input directory does not exist: {input_dir}"
         )
 
-    camera_name = input_dir.name
-
-    output_dir = (
+    input_dir = input_dir.resolve()
+    output_root = (
         input_dir.parent /
-        f"{camera_name}_first_frames"
+        f"{input_dir.name}_flat_frames"
     )
+
+    cameras = find_camera_dirs(input_dir)
+    if not cameras:
+        raise RuntimeError(
+            f"No camera folders (with YYYYMMDD subfolders) found in {input_dir}"
+        )
+
+    jobs = [
+        (cam, output_root / cam.relative_to(input_dir))
+        for cam in cameras
+    ]
+
+    print(f"Found {len(jobs)} camera folder(s):")
+    for cam, _ in jobs:
+        print(f"  {cam.relative_to(input_dir.parent)}")
 
     # Images from an earlier run are only replaced after confirmation
-    old_outputs = (
-        sorted(output_dir.glob(f"{camera_name}_*.jpg"))
-        if output_dir.exists() else []
+    n_old = sum(
+        len(old_outputs_for(out, cam.name)) for cam, out in jobs
     )
-
-    if old_outputs and not overwrite:
+    if n_old and not overwrite:
         if not confirm(
-            f"{output_dir} already contains {len(old_outputs)} images.\n"
+            f"{output_root} already contains {n_old} images.\n"
             f"Overwrite them completely? (y/n): "
         ):
             print("Aborted, nothing changed.")
             return
 
-    output_dir.mkdir(
-        exist_ok=True
-    )
+    for cam, out in jobs:
+        print(f"\n=== {cam.relative_to(input_dir.parent)} ===")
+        flatten_camera(cam, out, full_timeseries)
+
+    print(f"\nAll done. Output folder: {output_root}")
+
+
+def flatten_camera(
+    input_dir: Path,
+    output_dir: Path,
+    full_timeseries=None,
+) -> None:
+    """Collapse the date/time levels of one camera folder into output_dir."""
+
+    camera_name = input_dir.name
+    old_outputs = old_outputs_for(output_dir, camera_name)
 
     existing_images = {}
 
@@ -203,14 +264,14 @@ def collect_frames(
 
     for date_dir in sorted(input_dir.iterdir()):
 
-        if not date_dir.is_dir():
+        if not date_dir.is_dir() or not DATE_RE.match(date_dir.name):
             continue
 
         date_str = date_dir.name
 
         for time_dir in sorted(date_dir.iterdir()):
 
-            if not time_dir.is_dir():
+            if not time_dir.is_dir() or not TIME_RE.match(time_dir.name):
                 continue
 
             time_str = time_dir.name
@@ -245,9 +306,10 @@ def collect_frames(
                     reference_size = img.size
 
     if not existing_images:
-        raise RuntimeError(
-            "No images found."
-        )
+        print(f"No images found in {input_dir}, skipped.")
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Clear the earlier run only now that there is something to replace it
     for old_file in old_outputs:
@@ -390,8 +452,9 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Flatten a camera/date/time folder structure. "
-            "Optionally create a complete 2-hourly "
+            "Collapse the date/time folder levels of one or more camera "
+            "folders into <input>_flat_frames, keeping the rest of the "
+            "folder structure. Optionally create a complete 2-hourly "
             "timeseries with black placeholder images."
         )
     )
@@ -400,7 +463,8 @@ def main():
         "input_directory",
         type=to_path,
         help=(
-            "Camera directory containing date folders "
+            "A camera folder (with YYYYMMDD subfolders) or any folder "
+            "containing camera folders at any depth "
             "(Windows C:/... or Git Bash /c/... path)."
         )
     )
