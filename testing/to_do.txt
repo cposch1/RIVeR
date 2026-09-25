@@ -4,6 +4,8 @@ TO DO:
 ---------------------------------------------------------------------------
 clean up scripts in git rep
 fix orthorectification scripts
+	- a03aa and probably also a03ac
+		needs update for slider configuration (pixel space) as newly processed videos and frames will have way higher resolution
 	- a03b
 		check whether runs correctly
 finish a00 instructions

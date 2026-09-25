@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import os
+import re
 import shutil
 import argparse
 from datetime import datetime, timedelta
@@ -39,13 +41,22 @@ def add_label(
 
     text = f"{camera_name}\n{date_fmt}\n{time_fmt}"
 
-    try:
-        font = ImageFont.truetype(
-            "DejaVuSans-Bold.ttf",
-            20
-        )
-    except Exception:
-        font = ImageFont.load_default()
+    font_size = 40
+    font = None
+
+    # DejaVu (Linux), Arial Bold (Windows); the default font as last resort
+    for font_name in ("DejaVuSans-Bold.ttf", "arialbd.ttf"):
+        try:
+            font = ImageFont.truetype(font_name, font_size)
+            break
+        except OSError:
+            continue
+
+    if font is None:
+        try:
+            font = ImageFont.load_default(size=font_size)  # Pillow >= 10.1
+        except TypeError:
+            font = ImageFont.load_default()
 
     bbox = draw.multiline_textbbox(
         (0, 0),
@@ -109,9 +120,32 @@ def create_black_frame(
     )
 
 
+def to_path(path_str: str) -> Path:
+    """
+    Accept Windows paths (C:\\... or C:/...) and Git Bash paths (/c/...).
+    """
+
+    path_str = os.path.expanduser(path_str)
+
+    # Git Bash style /c/Users/... -> C:/Users/... (Windows only)
+    m = re.match(r"^/([a-zA-Z])(/|$)", path_str)
+    if os.name == "nt" and m:
+        path_str = f"{m.group(1).upper()}:/{path_str[3:]}"
+
+    return Path(path_str)
+
+
+def confirm(question: str) -> bool:
+    try:
+        return input(question).strip().lower() in ("y", "yes")
+    except EOFError:  # no interactive input
+        return False
+
+
 def collect_frames(
     input_dir: Path,
     full_timeseries=None,
+    overwrite: bool = False,
 ) -> None:
     """
     Expected input structure:
@@ -140,6 +174,20 @@ def collect_frames(
         input_dir.parent /
         f"{camera_name}_first_frames"
     )
+
+    # Images from an earlier run are only replaced after confirmation
+    old_outputs = (
+        sorted(output_dir.glob(f"{camera_name}_*.jpg"))
+        if output_dir.exists() else []
+    )
+
+    if old_outputs and not overwrite:
+        if not confirm(
+            f"{output_dir} already contains {len(old_outputs)} images.\n"
+            f"Overwrite them completely? (y/n): "
+        ):
+            print("Aborted, nothing changed.")
+            return
 
     output_dir.mkdir(
         exist_ok=True
@@ -200,6 +248,10 @@ def collect_frames(
         raise RuntimeError(
             "No images found."
         )
+
+    # Clear the earlier run only now that there is something to replace it
+    for old_file in old_outputs:
+        old_file.unlink()
 
     # -----------------------------------------
     # Standard mode
@@ -346,8 +398,17 @@ def main():
 
     parser.add_argument(
         "input_directory",
-        type=Path,
-        help="Camera directory containing date folders."
+        type=to_path,
+        help=(
+            "Camera directory containing date folders "
+            "(Windows C:/... or Git Bash /c/... path)."
+        )
+    )
+
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace images from an earlier run without asking."
     )
 
     parser.add_argument(
@@ -366,6 +427,7 @@ def main():
     collect_frames(
         args.input_directory,
         args.full_timeseries,
+        args.overwrite,
     )
 
 
