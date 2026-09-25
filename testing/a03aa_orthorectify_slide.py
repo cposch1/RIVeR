@@ -14,13 +14,15 @@ Features:
     2) Compute and save real-world distances (CSV)
     3) Run orthorectification and save orthorectified PNG
     4) Save transformation matrix JSON
-    5) Pop up the orthorectified image (Matplotlib window)
-    6) Print save paths to console (no pop-up notifications)
-    7) Automatically reset points after saving to avoid mismatches
+    5) Print save paths to console (no pop-up windows)
+    6) Automatically reset points after saving to avoid mismatches
+- With --coords-only, “Save GCPs” only performs step 1 (GCP + stake point
+  image coordinates and annotated PNG); no orthorectification is run.
 - Coloring logic:
   - Time item (HHMMSS) → green if transform JSON exists for (camera, date, time)
-  - Date item (YYYYMMDD) → green if all times for that date are transformed
-  - Camera item → green if all dates & times for that camera are transformed
+    (with --coords-only: if the GCP image coordinates CSV exists)
+  - Date item (YYYYMMDD) → green if all times for that date are done
+  - Camera item → green if all dates & times for that camera are done
 
 Environment:
     source ~/RIVeR/testing/setup.sh
@@ -30,6 +32,8 @@ Environment:
     python ~/RIVeR/testing/orthorectify.py --refresh-index
     # or to see river.config logs:
     python ~/RIVeR/testing/orthorectify.py --verbose
+    # or to only save GCP image coordinates (no orthorectification):
+    python ~/RIVeR/testing/orthorectify.py --coords-only
 """
 
 from __future__ import annotations
@@ -189,6 +193,11 @@ def transform_json_path(cam: str, date: str, time_: str) -> Path:
     return rect_dir / cam / "transforms" / f"{cam}_transform_{date}_{time_}.json"
 
 
+def gcps_img_csv_path(cam: str, date: str, time_: str) -> Path:
+    """Path to the GCP image coordinates CSV for this (camera, date, time)."""
+    return gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.csv"
+
+
 
 # ---------------------------
 # GEOTIFF export helpers
@@ -321,10 +330,17 @@ def crop_image_to_extent(img, source_extent, target_extent):
 # ---------------------------
 
 class OrthoApp:
-    def __init__(self, master: tk.Tk, df_frames: pd.DataFrame, frames_root: Path, xlim=None, ylim=None):
+    # GCP marker style; points loaded from a previous date (slider mode) are
+    # drawn semi-transparent so the underlying pole stays visible
+    POINT_COLOR = "red"
+    POINT_ALPHA_SLIDER = 0.25
+
+    def __init__(self, master: tk.Tk, df_frames: pd.DataFrame, frames_root: Path, xlim=None, ylim=None,
+                 coords_only: bool = False):
         self.master = master
         self.df_frames = df_frames.copy()
         self.frames_root = frames_root
+        self.coords_only = coords_only
 
         self.custom_xlim = xlim
         self.custom_ylim = ylim
@@ -451,7 +467,8 @@ class OrthoApp:
         self.btn_reset.pack(side=tk.LEFT, padx=(0, 8))
 
         # Single action button that saves GCPs, distances, runs transform, saves outputs, and shows image
-        self.btn_save_transform = ttk.Button(btns, text="Save & Transform", command=self.save_and_transform, state=tk.DISABLED)
+        self.btn_save_transform = ttk.Button(btns, text="Save GCPs" if self.coords_only else "Save & Transform",
+                                             command=self.save_and_transform, state=tk.DISABLED)
         self.btn_save_transform.pack(side=tk.LEFT, padx=(0, 8))
 
         self.btn_refresh = ttk.Button(btns, text="Refresh Index", command=self._refresh_index)
@@ -497,7 +514,12 @@ class OrthoApp:
         self.clip_entry.pack(side=tk.LEFT)
 
         # Buffer/clipper availability
-        if self._use_manual_extent():
+        if self.coords_only:
+            # Orthorectification settings are irrelevant in coords-only mode
+            self.epsg_checkbox.configure(state="disabled")
+            self.buffer_entry.configure(state="disabled")
+            self.clip_entry.configure(state="disabled")
+        elif self._use_manual_extent():
             self.buffer_entry.configure(state="disabled")
             self.clip_entry.configure(state="disabled")
         else:
@@ -518,16 +540,6 @@ class OrthoApp:
             length=150
         )
         self.clahe_slider.pack(side=tk.LEFT)
-
-
-        # Fan line toggling
-        self.show_fans = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            btns,
-            text="Show fan lines",
-            variable=self.show_fans,
-            command=self._apply_offsets_and_draw
-        ).pack(side=tk.LEFT, padx=(15,0))
 
         # Status line
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
@@ -596,7 +608,7 @@ class OrthoApp:
         ]["time_hhmmss"].unique())
         for i, t in enumerate(times):
             self.lb_time.insert(tk.END, t)
-            if self._transform_exists(self.selected_camera, self.selected_date, t):
+            if self._is_done(self.selected_camera, self.selected_date, t):
                 self.lb_time.itemconfig(i, {'bg': '#d0f0d0'})  # light green
         self.selected_time = None
         if times:
@@ -605,7 +617,9 @@ class OrthoApp:
 
     # ---- Completion checks ----
 
-    def _transform_exists(self, cam: str, date: str, time_: str) -> bool:
+    def _is_done(self, cam: str, date: str, time_: str) -> bool:
+        if self.coords_only:
+            return gcps_img_csv_path(cam, date, time_).exists()
         return transform_json_path(cam, date, time_).exists()
 
     def _date_all_done(self, cam: str, date: str) -> bool:
@@ -614,7 +628,7 @@ class OrthoApp:
         if not times:
             return False
         for t in times:
-            if not self._transform_exists(cam, date, t):
+            if not self._is_done(cam, date, t):
                 return False
         return True
 
@@ -877,125 +891,22 @@ class OrthoApp:
         ]
     
         self._draw_image()
-    
+
         # Restore zoom/pan
         self.ax.set_xlim(xlim)
         self.ax.set_ylim(ylim)
-    
-        for i, (x, y) in enumerate(self.points, start=1):
-    
-            color = 'black' if i == 1 else 'black'
-    
-            self.ax.plot(
-                x,
-                y,
-                'o',
-                color=color,
-                markersize=3
-            )
-    
-            
-            label = "P5" if i == 5 else str(i)
-            
-            self.ax.text(
-                x,
-                y,
-                label,
-                color=color,
-                fontsize=8,
-                ha='left',
-                va='bottom'
-            )
-    
         self.canvas.draw_idle()
-    
+
         self._disable_clicks()
         self.btn_save_transform["state"] = tk.NORMAL
 
 
-    # Reference fans handler
-
-    def _draw_gcp_fans(self):
-
-        if self.base_points is None:
-            return
-    
-        x1, y1 = self.base_points[0]
-        x2, y2 = self.base_points[1]
-        x3, y3 = self.base_points[2]
-        x4, y4 = self.base_points[3]
-
-    
-        offsets = np.arange(
-            -100,
-            101,
-            10
-        )
-    
-        for dy in offsets:
-            self.ax.plot(
-                [x2, x1],
-                [y2, y1 + dy],
-                color="0.6",      # light grey
-                alpha=0.3,
-                linewidth=1
-            )
-        for dy in offsets:
-        
-            self.ax.plot(
-                [x3, x4],
-                [y3, y4 + dy],
-                color="0.6",      # light grey
-                alpha=0.3,
-                linewidth=1
-            )
-
-        if len(self.point_offsets) >= 4:
-            self.ax.plot(
-            [x2, x1],
-            [
-                y2 + self.point_offsets[1],
-                y1 + self.point_offsets[0]
-            ],
-            color="0.6",
-            alpha=0.6,
-            linewidth=1.5
-        )
-        
-        self.ax.plot(
-            [x3, x4],
-            [
-                y3 + self.point_offsets[2],
-                y4 + self.point_offsets[3]
-            ],
-            color="0.6",
-            alpha=0.6,
-            linewidth=1.5
-        )
-
-    def _draw_gcp_lines(self):
-
-        if len(self.points) < 4:
-            return
-    
-        x1, y1 = self.points[0]
-        x2, y2 = self.points[1]
-        x3, y3 = self.points[2]
-        x4, y4 = self.points[3]
-    
-        self.ax.plot(
-            [x1, x2],
-            [y1, y2],
-            color="0.4",
-            linewidth=1.5
-        )
-    
-        self.ax.plot(
-            [x4, x3],
-            [y4, y3],
-            color="0.4",
-            linewidth=1.5
-        )
+    def _plot_point(self, x, y, label: str):
+        """Draw one GCP marker + label on the embedded axes."""
+        # Semi-transparent marker when adjusting previously loaded points
+        alpha = self.POINT_ALPHA_SLIDER if self.base_points is not None else 1.0
+        self.ax.plot(x, y, 'o', color=self.POINT_COLOR, alpha=alpha, markersize=3)
+        self.ax.text(x, y, label, color=self.POINT_COLOR, fontsize=8, ha='left', va='bottom')
 
 
     # ---- Core actions ----
@@ -1020,10 +931,12 @@ class OrthoApp:
             messagebox.showerror("Read Image", f"Failed to read image from path:\n{self.current_frame_path}\n\n{e}")
             return
 
-        # Show image & prepare click capture
+        # Show image & prepare click capture (clear stale points first,
+        # since _draw_image draws self.points)
+        self.points = []
+        self.base_points = None
         self._draw_image()
         self._enable_clicks()
-        self.points = []
         self._try_load_previous_gcps()
         self.status.set(f"Loaded: {self.selected_camera} {self.selected_date} {self.selected_time}. Click 4 points in order.")
         self.btn_reset["state"] = tk.NORMAL
@@ -1041,9 +954,8 @@ class OrthoApp:
             )
             self.ax.imshow(img_to_show)
 
-            self._draw_gcp_lines()
-            if self.show_fans.get():
-                self._draw_gcp_fans()
+            for i, (x, y) in enumerate(self.points, start=1):
+                self._plot_point(x, y, "P5" if i == 5 else str(i))
 
             self.ax.set_title(
                 f"Select GCPs:\n"
@@ -1062,71 +974,19 @@ class OrthoApp:
         ylim = self.ax.get_ylim()
     
         img = self.current_img.astype(np.float32)
-    
+
         if img.max() > 1:
             img = img / 255.0
-    
-        # --------------------------------------------------
-        # Estimate valid range only from image center
-        # --------------------------------------------------
-    
-        h, w = img.shape[:2]
-    
-        center = img[
-            int(0.33*h):int(0.66*h),
-            int(0.25*w):int(0.75*w)
-        ]
-    
-        # optional: ignore almost-black pixels
-        valid = center[center > 0.02]
-    
-        if valid.size > 0:
-    
-            lo = np.percentile(valid, 1)
-            hi = np.percentile(valid, 99)
-    
-            img = (img - lo) / (hi - lo)
-            img = np.clip(img, 0, 1)
-    
+
         strength = self.clahe_var.get()
 
-        
-        # No enhancement at all
         if strength == 0:
-        
+
+            # No enhancement at all
             self.display_img = self.current_img
-        
-            self._draw_image()
 
-            for i, (x, y) in enumerate(self.points, start=1):
-                color = 'black'
-                self.ax.plot(
-                    x,
-                    y,
-                    'o',
-                    color=color,
-                    markersize=3
-                )
-                self.ax.text(
-                    x,
-                    y,
-                    str(i),
-                    color=color,
-                    fontsize=8,
-                    ha='left',
-                    va='bottom'
-                )
-        
-            self.ax.set_xlim(xlim)
-            self.ax.set_ylim(ylim)
-        
-            self.canvas.draw_idle()
-        
-            return
+        else:
 
-
-        if strength > 0:
-        
             clip_limit_map = {
                 1: 0.005,
                 2: 0.01,
@@ -1134,42 +994,15 @@ class OrthoApp:
                 4: 0.05,
                 5: 0.10,
             }
-        
-            img = exposure.equalize_adapthist(
+
+            self.display_img = exposure.equalize_adapthist(
                 img,
                 clip_limit=clip_limit_map[strength]
             )
-    
-        self.display_img = img
-    
+
+        # Redraws image and existing GCPs
         self._draw_image()
 
-        # Re-draw existing GCPs
-        for i, (x, y) in enumerate(self.points, start=1):
-        
-            color = 'black'
-        
-            self.ax.plot(
-                x,
-                y,
-                'o',
-                color=color,
-                markersize=3
-            )
-        
-            
-            label = "P5" if i == 5 else str(i)
-            
-            self.ax.text(
-                x,
-                y,
-                label,
-                color=color,
-                fontsize=8,
-                ha='left',
-                va='bottom'
-            )
-    
         self.ax.set_xlim(xlim)
         self.ax.set_ylim(ylim)
     
@@ -1191,21 +1024,10 @@ class OrthoApp:
         if self.current_img is None:
             return
     
+        # Also clears base_points/offsets and disables the sliders
         self._clear_points_state(
             due_to_selection_change=False
         )
-    
-        self.base_points = None
-        self.point_offsets = [0, 0, 0, 0, 0]
-    
-        for s in self.sliders:
-            for i, s in enumerate(self.sliders):
-                s.set(0)
-            
-                if i < len(self.base_points):
-                    s["state"] = tk.NORMAL
-                else:
-                    s["state"] = tk.DISABLED
 
     def _on_click(self, event):
         if hasattr(self, "toolbar") and self.toolbar.mode != "":
@@ -1219,12 +1041,7 @@ class OrthoApp:
 
         # Register and draw
         self.points.append((x, y))
-        if n == 1:
-            self.ax.plot(x, y, 'o', color='black', markersize=3)  # red for point 1
-            self.ax.text(x, y, "1", color='black', fontsize=8, ha='left', va='bottom')
-        else:
-            self.ax.plot(x, y, 'o', color='black', markersize=3)  # blue for 2-4
-            self.ax.text(x, y, f"{n}", color='black', fontsize=8, ha='left', va='bottom')
+        self._plot_point(x, y, "P5" if n == 5 else str(n))
         self.canvas.draw_idle()
 
         if n == 4:
@@ -1242,8 +1059,11 @@ class OrthoApp:
             )
 
     def save_and_transform(self):
-        """Single action: save GCPs (CSV+PNG), distances CSV, run transform, save outputs, show ortho image."""
-        
+        """Single action: save GCPs (CSV+PNG), distances CSV, run transform, save outputs.
+
+        With --coords-only, stops after saving the GCP/stake point image coordinates.
+        """
+
         if len(self.points) < 4:
             messagebox.showwarning(
                 "GCPs",
@@ -1259,11 +1079,24 @@ class OrthoApp:
         date = self.selected_date
         time_ = self.selected_time
 
-       
+        gcps_img_file = gcps_img_csv_path(cam, date, time_)
+
+        # Coords-only: files are simply overwritten, just confirm first
+        if self.coords_only and gcps_img_file.exists():
+            choice = messagebox.askyesno(
+                "Overwrite?",
+                f"GCP image coordinates already exist for:\n"
+                f"{cam} {date} {time_}\n\n"
+                f"Do you want to overwrite them?"
+            )
+            if not choice:
+                print("[Info] Operation cancelled by user (no overwrite).")
+                return
+
         # Check if transformation already exists
         transf_file = transform_json_path(cam, date, time_)
-        
-        if transf_file.exists():
+
+        if not self.coords_only and transf_file.exists():
             choice = messagebox.askyesno(
                 "Overwrite?",
                 f"Transformation already exists for:\n"
@@ -1295,24 +1128,49 @@ class OrthoApp:
                     print(f"[WARN] Failed to clean previous outputs: {e}")
 
 
-        # ---- Save GCP image coordinates
+        # ---- Save GCP image coordinates (4 GCPs) and stake point (P5)
         try:
-            gcps_img_file = gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.csv"
             gcps_img_file.parent.mkdir(parents=True, exist_ok=True)
             with gcps_img_file.open("w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerows(self.points)
+                writer.writerows(self.points[:4])
+            print(f"[Saved] GCP image coords CSV: {gcps_img_file}")
+
+            if len(self.points) >= 5:
+                metric_file = gcps_dir / cam / f"{cam}_stake_point_{date}_{time_}.csv"
+                with metric_file.open("w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(self.points[4])
+                print(f"[Saved] Stake point CSV:     {metric_file}")
 
             gcps_img_dir = gcps_dir / cam / "gcps_imgs" 
             gcps_img_dir.mkdir(parents=True, exist_ok=True)
             gcps_img_png = gcps_img_dir / f"{cam}_gcps_img_{date}_{time_}.png"
-            # Save the current annotated figure
-            self.fig.savefig(str(gcps_img_png))
+            # Save the annotated figure at full (unzoomed) image extent,
+            # then restore the user's zoom/pan
+            xlim = self.ax.get_xlim()
+            ylim = self.ax.get_ylim()
+            left, right, bottom, top = self.ax.images[0].get_extent()
+            self.ax.set_xlim(left, right)
+            self.ax.set_ylim(bottom, top)
+            try:
+                self.fig.savefig(str(gcps_img_png))
+            finally:
+                self.ax.set_xlim(xlim)
+                self.ax.set_ylim(ylim)
+                self.canvas.draw_idle()
 
-            print(f"[Saved] GCP image coords CSV: {gcps_img_file}")
             print(f"[Saved] GCP annotated PNG:   {gcps_img_png}")
         except Exception as e:
             messagebox.showerror("Save GCPs", f"Failed to save GCP coordinates:\n{e}")
+            return
+
+        if self.coords_only:
+            self._populate_times()
+            self._populate_dates()
+            self._populate_cameras()
+            self._clear_points_state(due_to_selection_change=False)
+            self.status.set("GCP image coordinates saved (coords-only mode). Points reset.")
             return
 
         # ---- Compute & save distances
@@ -1334,28 +1192,6 @@ class OrthoApp:
 
         # ---- Run transform
         try:
-            gcps_img_file = (
-                gcps_dir
-                / cam
-                / f"{cam}_gcps_img_{date}_{time_}.csv"
-            )
-
-            # Save GCPs
-            with gcps_img_file.open("w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerows(self.points[:4])
-
-            # Save metric point
-            if len(self.points) >= 5:
-                metric_file = (
-                    gcps_dir
-                    / cam
-                    / f"{cam}_stake_point_{date}_{time_}.csv"
-                )
-                with metric_file.open("w", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(self.points[4])
-            
             buffer_m = self.buffer_var.get()
 
             if self.use_absolute_coords.get():
@@ -1463,11 +1299,12 @@ class OrthoApp:
         ax1.plot([x2_pix, x4_pix], [y2_pix, y4_pix], color='#7765E3', linewidth=2)
 
         # Points
-        ax1.plot(x1_pix, y1_pix, 'o', color='black', markersize=3)
-        ax1.text(x1_pix, y1_pix, "1", color='black', fontsize=8, ha='left', va='bottom')
-        ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color='black', markersize=3)
+        c = self.POINT_COLOR
+        ax1.plot(x1_pix, y1_pix, 'o', color=c, markersize=3)
+        ax1.text(x1_pix, y1_pix, "1", color=c, fontsize=8, ha='left', va='bottom')
+        ax1.plot([x2_pix, x3_pix, x4_pix], [y2_pix, y3_pix, y4_pix], 'o', color=c, markersize=3)
         pts = [(x2_pix, y2_pix), (x3_pix, y3_pix), (x4_pix, y4_pix)]
-        [ax1.text(x, y, str(i), color='black', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
+        [ax1.text(x, y, str(i), color=c, fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts, start=2)]
 
         
         # Orthorectified image with overlay
@@ -1606,11 +1443,11 @@ class OrthoApp:
             ax2.plot([x2_rw, x4_rw], [y2_rw, y4_rw], color='#7765E3', linewidth=2)
 
             # Points
-            ax2.plot(x1_rw, y1_rw, 'o', color='black', markersize=3)
-            ax2.text(x1_rw, y1_rw, "1", color='black', fontsize=8, ha='left', va='bottom')
-            ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color='black', markersize=3)
+            ax2.plot(x1_rw, y1_rw, 'o', color=c, markersize=3)
+            ax2.text(x1_rw, y1_rw, "1", color=c, fontsize=8, ha='left', va='bottom')
+            ax2.plot([x2_rw, x3_rw, x4_rw], [y2_rw, y3_rw, y4_rw], 'o', color=c, markersize=3)
             pts2 = [(x2_rw, y2_rw), (x3_rw, y3_rw), (x4_rw, y4_rw)]
-            [ax2.text(x, y, str(i), color='black', fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts2, start=2)]
+            [ax2.text(x, y, str(i), color=c, fontsize=8, ha='left', va='bottom') for i, (x, y) in enumerate(pts2, start=2)]
 
             ax2.set_xlabel('X (m)')
             ax2.set_ylabel('Y (m)')
@@ -1637,8 +1474,7 @@ class OrthoApp:
 
         print(f"[Saved] Orthorectified PNG: {ortho_img}")
 
-        # Show the figure (as requested)
-        plt.show(block=False)
+        plt.close(fig)  # saved only, no pop-up window
 
         # ---- Save orthorectified image only (no overlays) ----
         fig_clean, ax_clean = plt.subplots(figsize=(6, 4))
@@ -1776,7 +1612,10 @@ def main(argv: List[str]) -> int:
         metavar=("YMIN", "YMAX"),
         default=None,
     )
-  
+    parser.add_argument("--coords-only", action="store_true",
+                        help="Only save GCP/stake point image coordinates (CSV + annotated PNG); "
+                             "skip orthorectification.")
+
     args = parser.parse_args(argv)
 
     frames_root = frames_dir
@@ -1797,7 +1636,8 @@ def main(argv: List[str]) -> int:
 
     # Launch GUI
     root = tk.Tk()
-    app = OrthoApp(root, df_frames, frames_root, xlim=args.xlim,ylim=args.ylim)
+    app = OrthoApp(root, df_frames, frames_root, xlim=args.xlim, ylim=args.ylim,
+                   coords_only=args.coords_only)
     root.mainloop()
     return 0
 

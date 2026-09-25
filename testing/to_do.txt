@@ -2,19 +2,16 @@ TO DO:
 
 
 ---------------------------------------------------------------------------
-perform and use actual good fix of hydro gcp points
-	- estimate migration until July from other stations?
-	- but for the sake of analysis then continue with a fixed position
-rerun all orthorectification steps
-	- based on new defished data (ih130)
-	- based on good gcp fixes
 clean up scripts in git rep
+fix orthorectification scripts
+	- a03b
+		check whether runs correctly
+finish a00 instructions
 ---------------------------------------------------------------------------
 
 
 
 ---------------------------------------------------------------------------
-think about using cross-section selection only once a day
 account for sources of uncertainty from orthrorectification
 	- from defishing
 	- gcp img coordinate selection (human)
