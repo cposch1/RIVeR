@@ -50,7 +50,6 @@ _logging.getLogger("river.config").setLevel(_logging.INFO if _verbose else _logg
 import argparse
 import json
 import re
-import shutil
 from pathlib import Path
 
 import rasterio
@@ -330,15 +329,12 @@ def main():
     
     print(f"[INFO] Processing {len(df_proc)} scenes")
 
-    # GCP image coordinates: read from the modelled (or manual) folder; the
-    # per-scene copies go to gcps/<camera>/_auto so the manual folder, which
-    # b02 reads as hand-picked data, is never touched
+    # GCP image coordinates are read directly from the modelled (or manual)
+    # folder; nothing is copied or written there
     if args.gcps == "modelled":
         gcp_src_dir = gcps_dir / cam / "_modelling" / "output"
     else:
         gcp_src_dir = gcps_dir / cam
-    gcp_auto_dir = gcps_dir / cam / "_auto"
-    gcp_auto_dir.mkdir(parents=True, exist_ok=True)
 
     # Real-world GCP distances: a03aa only writes them in full mode (not with
     # --coords-only), so derive them from the real coordinates if missing
@@ -535,12 +531,7 @@ def main():
         try:
     
             # ---------- GCP handling ----------
-            # timestamp-specific GCP file for this scene (used here and by a04)
-            gcp_target = (
-                gcp_auto_dir
-                / f"{cam}_gcps_img_{date}_{time_}.csv"
-            )
-
+            # pick the GCP file for this scene (a04 uses the same rule)
             if args.dyn:
 
                 # Skip dates with no available GCP file
@@ -563,34 +554,25 @@ def main():
 
                 # Same timestamp if available, else the first one of that date
                 times = available_gcps[date]
-                reference_time = time_ if time_ in times else times[0]
-
-                source_gcp = (
-                    gcp_src_dir
-                    / f"{cam}_gcps_img_{date}_{reference_time}.csv"
-                )
+                src_date = date
+                src_time = time_ if time_ in times else times[0]
 
             else:
 
                 # Use single reference GCP file
-                source_gcp = gcp_ref
+                src_date, src_time = args.ref_date, args.ref_time
 
-            # always refresh: _auto belongs to this script, and a re-modelled
-            # source must not be shadowed by an old copy
-            shutil.copy(
-                source_gcp,
-                gcp_target
-            )
+            source_gcp = f"{cam}_gcps_img_{src_date}_{src_time}.csv"
 
             # ---------- TRANSFORM ----------
             transformation = transform(
                 gcp_cam=cam,
-                gcp_date=date,
-                gcp_time=time_,
+                gcp_date=src_date,
+                gcp_time=src_time,
                 frame_path=frame_path,
                 absolute_coords=abs_mod,
                 extent_override=display_extent,
-                gcp_dir=gcp_auto_dir,
+                gcp_dir=gcp_src_dir,
             )
 
             with transf_file.open("w") as f:
@@ -606,7 +588,7 @@ def main():
             img = mpimg.imread(frame_path)
 
             # ---------- LOAD GCPs ----------
-            pts = load_gcps_img(cam, date, time_, gcp_auto_dir)
+            pts = load_gcps_img(cam, src_date, src_time, gcp_src_dir)
             (x1, y1) = pts["point1"]
             (x2, y2) = pts["point2"]
             (x3, y3) = pts["point3"]
@@ -792,10 +774,11 @@ def main():
             processed.append(
                 (
                     date,
-                    time_
+                    time_,
+                    source_gcp
                 )
             )
-            print(f"[OK] {date} {time_}")
+            print(f"[OK] {date} {time_} (GCPs: {source_gcp})")
 
         except Exception as e:
             skipped.append(
@@ -827,11 +810,11 @@ def main():
                 f"{d} -> reference GCP time {t}\n"
             )
     
-        f.write("\n\nPROCESSED SCENES\n")
+        f.write("\n\nPROCESSED SCENES (<- GCP file used)\n")
         f.write("-" * 70 + "\n")
-    
-        for d, t in processed:
-            f.write(f"{d} {t}\n")
+
+        for d, t, src in processed:
+            f.write(f"{d} {t} <- {src}\n")
     
         f.write("\n\nSKIPPED / FAILED SCENES\n")
         f.write("-" * 70 + "\n")

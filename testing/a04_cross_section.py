@@ -9,7 +9,13 @@ Purpose:
 
 Inputs:
 - FRAMES_DIR/_frame_paths.parquet
-- Orthorectified images + transform JSONs
+- GCP image coordinates: gcps/<cam>/_modelling/output (--gcps modelled,
+  default) or gcps/<cam> (--gcps manual); same timestamp, else that date's
+  first file (as in a03b --dyn)
+
+Coordinates:
+- local GCP system (default) or EPSG:32623 with --abs-coords.
+  Cross-sections stay parallel to the GCP 1->2 baseline.
 
 Outputs:
 - <cam>_xs_coord_<date>_<time>.csv
@@ -58,16 +64,39 @@ parser.add_argument(
     nargs=2,
     type=float,
     metavar=("XMIN", "XMAX"),
-    default=[-20, 50],
-    help="Manually set x-axis limits for display (default: -20 50)"
+    default=None,
+    help="Manually set x-axis limits for display (default local: -20 50; "
+         "with --abs-coords: GCP extent +- --buffer)"
 )
 parser.add_argument(
     "--ylim",
     nargs=2,
     type=float,
     metavar=("YMIN", "YMAX"),
-    default=[-10, 20],
-    help="Manually set y-axis limits for display (default: -10 20)"
+    default=None,
+    help="Manually set y-axis limits for display (default local: -10 20; "
+         "with --abs-coords: GCP extent +- --buffer)"
+)
+parser.add_argument(
+    "--abs-coords",
+    action="store_true",
+    help="Work in absolute EPSG:32623 (UTM) coordinates instead of the local "
+         "GCP system."
+)
+parser.add_argument(
+    "--buffer",
+    type=float,
+    default=20.0,
+    help="With --abs-coords: display buffer around the GCP extent (m, default: 20)"
+)
+parser.add_argument(
+    "--gcps",
+    choices=["modelled", "manual"],
+    default="modelled",
+    help="GCP image coordinates to use: modelled (b02 output in "
+         "gcps/<camera>/_modelling/output, default) or manual picks "
+         "(gcps/<camera>). Per scene: same timestamp, else the first file "
+         "of that date (as in a03b_orthorectify_auto.py --dyn)"
 )
 
 args = parser.parse_args()
@@ -115,13 +144,90 @@ def ortho_img_path(cam, date, time_):
     )
 
 
-def gcps_exist(cam, date, time_):
-    p = gcps_dir / cam / f"{cam}_gcps_img_{date}_{time_}.csv"
-    return p.exists(), p
+# ------------------------------------------------------------
+# Coordinate spaces (local GCP system vs absolute EPSG:32623)
+# ------------------------------------------------------------
+# The local system has GCP 1 at (0, 0) and GCP 2 on the +x axis. The absolute
+# system is the same frame rotated/translated so GCP 1 and 2 sit at their
+# real coordinates (see oblique_view_transformation_matrix), so points convert
+# between the two (to within a few cm: the local system uses the rounded
+# distances in <cam>_gcps_dist.csv).
+SPACE = "abs" if args.abs_coords else "local"
+
+# Cross-section look (clicked, slid and reloaded alike): line plus small,
+# semi-transparent bank markers so the bank stays visible below
+XS_LINE_COLOR = "#F5BF61"
+XS_DOT_SIZE = 2.5
+XS_DOT_ALPHA = 0.5
+SPACE_LABEL = {"abs": "EPSG:32623", "local": "local"}
 
 
-def transform_exists(cam, date, time_):
-    return gcps_exist(cam, date, time_)[0]
+def baseline_frame(cam, space):
+    """Origin (GCP 1) and unit vectors along / across the GCP 1->2 baseline."""
+    if space == "local":
+        return np.zeros(2), np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    real = load_gcps_real(cam)
+    p1 = np.array(real["point1"], dtype=float)
+    p2 = np.array(real["point2"], dtype=float)
+    u = (p2 - p1) / np.linalg.norm(p2 - p1)
+    return p1, u, np.array([-u[1], u[0]])
+
+
+def to_st(p, frame):
+    """Point -> (s along baseline, t across baseline), metres from GCP 1."""
+    o, u, n = frame
+    d = np.asarray(p, dtype=float) - o
+    return float(d @ u), float(d @ n)
+
+
+def from_st(s, t, frame):
+    o, u, n = frame
+    p = o + s * u + t * n
+    return float(p[0]), float(p[1])
+
+
+def point_space(x, y):
+    """UTM values are far outside anything a local system reaches."""
+    return "abs" if max(abs(x), abs(y)) > 1e4 else "local"
+
+
+def convert_points(pts, cam, to_space):
+    """Convert points between the local and absolute system (via s/t)."""
+    out = []
+    for x, y in pts:
+        src = point_space(x, y)
+        if src == to_space:
+            out.append((x, y))
+            continue
+        s, t = to_st((x, y), baseline_frame(cam, src))
+        out.append(from_st(s, t, baseline_frame(cam, to_space)))
+    return out
+
+
+def gcp_folder(cam):
+    # --gcps modelled: b02 output; --gcps manual: hand-picked GCPs
+    if args.gcps == "modelled":
+        return gcps_dir / cam / "_modelling" / "output"
+    return gcps_dir / cam
+
+
+def find_gcp_file(cam, date, time_):
+    """
+    GCP image coordinate CSV for a scene, same rule as a03b --dyn: the file
+    with the same timestamp, else the first file of that date. None if the
+    date has no file.
+    """
+    folder = gcp_folder(cam)
+    exact = folder / f"{cam}_gcps_img_{date}_{time_}.csv"
+    if exact.exists():
+        return exact
+    same_date = sorted(folder.glob(f"{cam}_gcps_img_{date}_*.csv"))
+    return same_date[0] if same_date else None
+
+
+def gcps_available(cam, date, time_):
+    # a scene can be loaded as soon as a GCP image coordinate CSV exists for it
+    return find_gcp_file(cam, date, time_) is not None
 
 
 def xs_exists(cam, date, time_):
@@ -193,8 +299,10 @@ class CrossSectionApp:
         self.selected_time = None
 
         self.points_rw: List[Tuple[float, float]] = []
+        self.frame = None  # baseline frame of the loaded scene (see to_st)
 
         self.xs_line = None
+        self.xs_dots = None
         self.cid_move = None
         self.preview_line = None
 
@@ -210,7 +318,10 @@ class CrossSectionApp:
 
     # ---------------- UI ----------------
     def _build_ui(self):
-        self.master.title("RIVeR-ICE — Cross-Section Selection")
+        self.master.title(
+            f"RIVeR-ICE — Cross-Section Selection "
+            f"(GCPs: {args.gcps}, coordinates: {SPACE_LABEL[SPACE]})"
+        )
         self.master.geometry("1200x800")
 
         top = ttk.Frame(self.master)
@@ -234,9 +345,12 @@ class CrossSectionApp:
         slider_frame = ttk.Frame(self.master)
         slider_frame.pack(side=tk.TOP, fill=tk.X)
         
+        # Sliders move the banks along the GCP 1->2 baseline (= X in local)
+        bank_unit = "X" if SPACE == "local" else "(m along GCP 1->2)"
+
         ttk.Label(
             slider_frame,
-            text="Left bank X"
+            text=f"Left bank {bank_unit}"
         ).pack(side=tk.LEFT)
         
         self.left_slider = tk.Scale(
@@ -252,7 +366,7 @@ class CrossSectionApp:
         
         ttk.Label(
             slider_frame,
-            text="Right bank X"
+            text=f"Right bank {bank_unit}"
         ).pack(side=tk.LEFT)
         
         self.right_slider = tk.Scale(
@@ -315,7 +429,7 @@ class CrossSectionApp:
         for i, t in enumerate(times):
             self.lb_time.insert(tk.END, t)
 
-            if transform_exists(self.selected_camera, self.selected_date, t):
+            if gcps_available(self.selected_camera, self.selected_date, t):
                 self.lb_time.itemconfig(i, {'fg': 'black'})
             else:
                 self.lb_time.itemconfig(i, {'fg': 'grey'})
@@ -336,20 +450,23 @@ class CrossSectionApp:
         if event.inaxes is not self.ax:
             return
     
+        # preview stays parallel to the GCP 1->2 baseline (= horizontal in local)
         x1, y1 = self.points_rw[0]
-        x2 = event.xdata
-    
+        _, t1 = to_st((x1, y1), self.frame)
+        s2, _ = to_st((event.xdata, event.ydata), self.frame)
+        x2, y2 = from_st(s2, t1, self.frame)
+
         if self.preview_line is not None:
             self.preview_line.remove()
-    
+
         self.preview_line, = self.ax.plot(
             [x1, x2],
-            [y1, y1],
+            [y1, y2],
             "--",
             color="cyan",
             linewidth=1
         )
-    
+
         self.fig_canvas.draw_idle()
 
     def _update_xs_from_sliders(self, value=None):
@@ -358,28 +475,66 @@ class CrossSectionApp:
         if len(self.points_rw) != 2:
             return
     
-        x1 = self.left_slider.get()
-        x2 = self.right_slider.get()
-    
-        y = self.points_rw[0][1]
-    
+        # sliders = bank positions along the baseline; keep the offset of bank 1
+        s1 = self.left_slider.get()
+        s2 = self.right_slider.get()
+
+        _, t = to_st(self.points_rw[0], self.frame)
+
         self.points_rw = [
-            (x1, y),
-            (x2, y)
+            from_st(s1, t, self.frame),
+            from_st(s2, t, self.frame)
         ]
-    
-        
-        if self.xs_line is not None:
-            self.xs_line.remove()
-        
-        self.xs_line, = self.ax.plot(
-            [x1, x2],
-            [y, y],
-            color="black",
-            linewidth=2
-        )
-    
+        (x1, y1), (x2, y2) = self.points_rw
+
+
+        self._draw_xs(self.points_rw)
+
         self.fig_canvas.draw_idle()
+
+    def _draw_xs(self, points):
+        """Draw the cross-section (line + bank markers), replacing the old one."""
+        for artist in (self.xs_line, self.xs_dots):
+            if artist is not None:
+                artist.remove()
+        self.xs_line = self.xs_dots = None
+
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+
+        if len(points) == 2:
+            self.xs_line, = self.ax.plot(
+                xs, ys,
+                color=XS_LINE_COLOR,
+                linewidth=2
+            )
+
+        if points:
+            self.xs_dots, = self.ax.plot(
+                xs, ys,
+                "o",
+                linestyle="none",
+                color="red",
+                alpha=XS_DOT_ALPHA,
+                markersize=XS_DOT_SIZE
+            )
+
+    def _view_limits(self, cam):
+        """Display limits: --xlim/--ylim if given, else the mode's default."""
+        if SPACE == "abs":
+            # like a03b: GCP extent +- buffer, in EPSG:32623
+            real = load_gcps_real(cam)
+            xs = [c[0] for c in real.values()]
+            ys = [c[1] for c in real.values()]
+            b = args.buffer
+            default_x = (min(xs) - b, max(xs) + b)
+            default_y = (min(ys) - b, max(ys) + b)
+        else:
+            default_x, default_y = (-20, 50), (-10, 20)
+
+        xlim = tuple(self.custom_xlim) if self.custom_xlim else default_x
+        ylim = tuple(self.custom_ylim) if self.custom_ylim else default_y
+        return xlim, ylim
 
     # ---------------- Core ----------------
     def load_ortho(self):
@@ -394,74 +549,90 @@ class CrossSectionApp:
             messagebox.showwarning("Selection", "Select camera, date, time")
             return
 
-        exists, gcp_path = gcps_exist(
+        gcp_file = find_gcp_file(
             self.selected_camera,
             self.selected_date,
             self.selected_time
         )
 
-        if not exists:
+        if gcp_file is None:
+            hint = (
+                "Model GCPs for this date in b02, "
+                "or start with --gcps manual."
+                if args.gcps == "modelled" else
+                "Pick GCPs for this date with a03aa, "
+                "or start with --gcps modelled."
+            )
             messagebox.showerror(
                 "Missing GCPs",
-                f"No GCP file found:\n{gcp_path}\n\nRun orthorectification first."
+                f"No {args.gcps} GCP file for {self.selected_date} in:\n"
+                f"{gcp_folder(self.selected_camera)}\n\n{hint}"
             )
             return
 
+        # the GCP file may belong to another time of that date: take its
+        # timestamp for the GCPs, but always the selected scene's frame
+        gcp_date, gcp_time = gcp_file.stem.split("_")[-2:]
+        print(f"[INFO] GCPs: {gcp_file.name}")
+
         try:
-            display_extent = (
-                self.custom_xlim[0],
-                self.custom_xlim[1],
-                self.custom_ylim[0],
-                self.custom_ylim[1]
+            xlim, ylim = self._view_limits(self.selected_camera)
+            display_extent = (xlim[0], xlim[1], ylim[0], ylim[1])
+
+            _, _, frame_path = load_frame(
+                self.df_frames,
+                self.selected_camera,
+                self.selected_date,
+                self.selected_time
             )
-            
+
             trans = transform(
                 gcp_cam=self.selected_camera,
-                gcp_date=self.selected_date,
-                gcp_time=self.selected_time,
-                df_frames=self.df_frames,
-                absolute_coords=False,
+                gcp_date=gcp_date,
+                gcp_time=gcp_time,
+                frame_path=frame_path,
+                absolute_coords=args.abs_coords,
                 extent_override=display_extent,
+                gcp_dir=gcp_file.parent,
             )
-        
+
             self.trans = trans
-        
+            self.frame = baseline_frame(self.selected_camera, SPACE)
+
         except Exception as e:
             messagebox.showerror("Transform failed", str(e))
             return
-        
+
         extent = trans["extent"]
 
         self.ax.clear()
         self.xs_line = None
+        self.xs_dots = None
         self.preview_line = None
-        
+
         self.ax.imshow(
             trans["transformed_img"],
             extent=trans["extent"]
         )
-        
-        self.ax.set_xlim(*self.custom_xlim)
-        self.ax.set_ylim(*self.custom_ylim)
+
+        self.ax.set_xlim(*xlim)
+        self.ax.set_ylim(*ylim)
         self.ax.set_aspect("equal")
 
+        if SPACE == "abs":
+            self.ax.set_xlabel("Easting (m, EPSG:32623)")
+            self.ax.set_ylabel("Northing (m, EPSG:32623)")
+            self.ax.ticklabel_format(useOffset=False, style="plain")
+        else:
+            self.ax.set_xlabel("X (m, local)")
+            self.ax.set_ylabel("Y (m, local)")
+
         print("Transform extent:", trans["extent"])
-        print("Current xlim:", self.custom_xlim)
-        print("Current ylim:", self.custom_ylim)
+        print("Current xlim:", xlim)
+        print("Current ylim:", ylim)
         print("Image shape:", trans["transformed_img"].shape)
 
 
-        # Grid
-        xmin, xmax = self.ax.get_xlim()
-        ymin, ymax = self.ax.get_ylim()
-        
-        x_ticks = np.arange(np.floor(xmin / 2) * 2, np.ceil(xmax / 2) * 2, 2)
-        y_ticks = np.arange(np.floor(ymin / 2) * 2, np.ceil(ymax / 2) * 2, 2)
-        
-        self.ax.set_xticks(x_ticks)
-        self.ax.set_yticks(y_ticks)
-        
-        self.ax.grid(True, color='yellow', alpha=0.5, linewidth=0.5)
 
         
         self.ax.set_title("Click LEFT bank then RIGHT bank")
@@ -492,36 +663,44 @@ class CrossSectionApp:
                         )
         
                 if len(pts) == 2:
-        
+
+                    # a previous XS saved in the other coordinate space is
+                    # converted (same baseline frame, within a few cm)
+                    src_space = point_space(*pts[0])
+                    pts = convert_points(pts, self.selected_camera, SPACE)
+                    if src_space != SPACE:
+                        print(
+                            f"[INFO] Previous XS converted from "
+                            f"{SPACE_LABEL[src_space]} to {SPACE_LABEL[SPACE]}"
+                        )
+
                     self.points_rw = pts
-        
+
                     (x1, y1), (x2, y2) = pts
-        
-                    self.xs_line, = self.ax.plot(
-                        [x1, x2],
-                        [y1, y2],
-                        color="black",
-                        linewidth=2
-                    )
-        
-                            
+
+                    self._draw_xs(pts)
+
+                    # slider values = bank positions along the baseline
+                    s1, _ = to_st((x1, y1), self.frame)
+                    s2, _ = to_st((x2, y2), self.frame)
+
                     self.left_slider.config(state=tk.NORMAL)
                     self.right_slider.config(state=tk.NORMAL)
-        
+
                     self.left_slider.configure(
-                        from_=x1 - 10,
-                        to=x1 + 10
+                        from_=s1 - 10,
+                        to=s1 + 10
                     )
-                    
+
                     self.right_slider.configure(
-                        from_=x2 - 10,
-                        to=x2 + 10
+                        from_=s2 - 10,
+                        to=s2 + 10
                     )
-        
+
                     self._loading_sliders = True
-                    
-                    self.left_slider.set(x1)
-                    self.right_slider.set(x2)
+
+                    self.left_slider.set(s1)
+                    self.right_slider.set(s2)
                     
                     self._loading_sliders = False
         
@@ -554,41 +733,27 @@ class CrossSectionApp:
             self.points_rw.append(
                 (event.xdata, event.ydata)
             )
-    
-            self.ax.plot(
-                event.xdata,
-                event.ydata,
-                "ro",
-                markersize=4
-            )
+
+            self._draw_xs(self.points_rw)
     
         # second click
         elif len(self.points_rw) == 1:
     
+            # second bank on the line through bank 1, parallel to the
+            # GCP 1->2 baseline (= same y in local coordinates)
             x1, y1 = self.points_rw[0]
-    
-            x2 = event.xdata
-            y2 = y1
-    
+            _, t1 = to_st((x1, y1), self.frame)
+            s2, _ = to_st((event.xdata, event.ydata), self.frame)
+
+            x2, y2 = from_st(s2, t1, self.frame)
+
             self.points_rw.append((x2, y2))
     
             if self.preview_line is not None:
                 self.preview_line.remove()
                 self.preview_line = None
-    
-            self.ax.plot(
-                [x1, x2],
-                [y1, y2],
-                color="#F5BF61",
-                linewidth=2
-            )
-    
-            self.ax.plot(
-                x2,
-                y2,
-                "ro",
-                markersize=4
-            )
+
+            self._draw_xs(self.points_rw)
     
             self.canvas.mpl_disconnect(self.cid)
     
@@ -604,10 +769,8 @@ class CrossSectionApp:
             self.preview_line.remove()
             self.preview_line = None
 
-        if self.xs_line is not None:
-            self.xs_line.remove()
-            self.xs_line = None
-    
+        self._draw_xs([])
+
         self.load_ortho()
 
     def save_xs(self):
@@ -684,7 +847,7 @@ class CrossSectionApp:
             ax2.plot(
                 [left_px[0], right_px[0]],
                 [left_px[1], right_px[1]],
-                color="#F5BF61",
+                color=XS_LINE_COLOR,
                 linewidth=2
             )
         
@@ -692,7 +855,8 @@ class CrossSectionApp:
                 [left_px[0], right_px[0]],
                 [left_px[1], right_px[1]],
                 color="red",
-                s=20
+                alpha=XS_DOT_ALPHA,
+                s=XS_DOT_SIZE ** 2  # scatter size is the area (points^2)
             )
         
             ax2.axis("off")
@@ -713,58 +877,10 @@ class CrossSectionApp:
         
             plt.close(fig2)
 
-            fig3, ax3 = plt.subplots(figsize=(12, 8))
-            ax3.imshow(frame)
-            
-            x1, y1 = left_px
-            x2, y2 = right_px
-            
-            dx = x2 - x1
-            dy = y2 - y1
-            
-            length = np.hypot(dx, dy)
-            
-            if length > 0:
-            
-                dx /= length
-                dy /= length
-            
-                extension = 200.0  # pixels beyond each bank
-            
-                x_start = x1 - dx * extension
-                y_start = y1 - dy * extension
-            
-                x_end = x2 + dx * extension
-                y_end = y2 + dy * extension
-            
-                ax3.plot(
-                    [x_start, x_end],
-                    [y_start, y_end],
-                    "--",
-                    color="grey",
-                    alpha=0.5,
-                    linewidth=2
-                )
-            
-            ax3.axis("off")
-            
-            first_frame_img = xs_img_path(
-                self.selected_camera,
-                self.selected_date,
-                self.selected_time,
-                view="first_frame"
-            )
-            
-            fig3.savefig(
-                first_frame_img,
-                dpi=300,
-                bbox_inches="tight",
-                pad_inches=0
-            )
-            
-            plt.close(fig3)
-
-        messagebox.showinfo("Saved", f"Cross-section saved:\n{p}")
+        messagebox.showinfo(
+            "Saved",
+            f"Cross-section saved ({SPACE_LABEL[SPACE]} coordinates):\n{p}"
+        )
 
         self._on_date()
 
@@ -785,6 +901,10 @@ class CrossSectionApp:
 def main():
     frames_root = frames_dir
     df_frames = pd.read_parquet(frames_root / "_frame_paths.parquet")
+
+    where = "gcps/<camera>/_modelling/output" if args.gcps == "modelled" else "gcps/<camera>"
+    print(f"[INFO] GCPs: {args.gcps} ({where}); scenes without them are grey")
+    print(f"[INFO] Coordinates: {SPACE_LABEL[SPACE]}")
 
     root = tk.Tk()
     app = CrossSectionApp(root, df_frames, xlim=args.xlim, ylim=args.ylim)
