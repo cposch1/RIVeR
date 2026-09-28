@@ -276,6 +276,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--ext", nargs="+", default=DEFAULT_INPUT_EXTS,
                    help="Video file extensions to include (default: .avi .mp4).")
 
+    p.add_argument("--index-only", action="store_true",
+                   help="Only rebuild FRAMES_DIR/_frame_paths.* from the existing "
+                        "frame folders (no extraction).")
+
     # Verbose (already parsed pre-import to affect import-time logs)
     p.add_argument("--verbose", action="store_true",
                    help="Show INFO logs from river.config for this run.")
@@ -300,6 +304,12 @@ def main(argv: List[str]) -> int:
     if not frames_dir_env:
         print("ERROR: FRAMES_DIR is not set. Run 'source setup.sh' in this shell.", file=sys.stderr)
         return 2
+
+    if args.index_only:
+        if not frames_dir.is_dir():
+            print(f"ERROR: FRAMES_DIR does not exist: {frames_dir}", file=sys.stderr)
+            return 2
+        return write_frames_index(frames_dir)
 
 
 
@@ -449,51 +459,61 @@ def main(argv: List[str]) -> int:
               "Run your metadata extraction to create _<camera>_meta.csv files.", file=sys.stderr)
 
     # ---------- Build / update frames index ----------
+    write_frames_index(frames_dir)
 
-    def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
-        """
-        Walk a frames directory structured like:
-            frame_dir / camera / date / time_hhmmss / *.jpg
+    return 0
 
-        Returns a DataFrame with columns:
-            camera, date_yyyymmdd, time_hhmmss, frame_path
-        """
-        frame_dir = frame_dir.resolve()
-        rows = []
 
-        # Loop structure: camera → date → time_hhmmss → frames
-        for camera_dir in frame_dir.iterdir():
-            if not camera_dir.is_dir():
+# ---------- Frames index ----------
+
+def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
+    """
+    Walk a frames directory structured like:
+        frame_dir / camera / date / time_hhmmss / *.jpg
+
+    Returns a DataFrame with columns:
+        camera, date_yyyymmdd, time_hhmmss, frame_path
+    """
+    frame_dir = frame_dir.resolve()
+    rows = []
+
+    # Loop structure: camera → date → time_hhmmss → frames
+    for camera_dir in frame_dir.iterdir():
+        # skip files and helper folders such as _old_data
+        if not camera_dir.is_dir() or camera_dir.name.startswith("_"):
+            continue
+        camera = camera_dir.name
+
+        for date_dir in camera_dir.iterdir():
+            if not date_dir.is_dir():
                 continue
-            camera = camera_dir.name
+            date = date_dir.name  # e.g. "20250426"
 
-            for date_dir in camera_dir.iterdir():
-                if not date_dir.is_dir():
+            for time_dir in date_dir.iterdir():
+                if not time_dir.is_dir():
                     continue
-                date = date_dir.name  # e.g. "20250426"
 
-                for time_dir in date_dir.iterdir():
-                    if not time_dir.is_dir():
-                        continue
+                # folder name is time_hhmmss (already HHMMSS)
+                time_hhmmss = time_dir.name
 
-                    # folder name is time_hhmmss (already HHMMSS)
-                    time_hhmmss = time_dir.name
+                # Collect all JPG frames
+                for jpg in time_dir.glob("*.jpg"):
+                    rows.append({
+                        "camera": camera,
+                        "date_yyyymmdd": date,
+                        "time_hhmmss": time_hhmmss,
+                        "frame_path": str(jpg.resolve())
+                    })
 
-                    # Collect all JPG frames
-                    for jpg in time_dir.glob("*.jpg"):
-                        rows.append({
-                            "camera": camera,
-                            "date_yyyymmdd": date,
-                            "time_hhmmss": time_hhmmss,
-                            "frame_path": str(jpg.resolve())
-                        })
+    df = pd.DataFrame(
+        rows,
+        columns=["camera", "date_yyyymmdd", "time_hhmmss", "frame_path"]
+    )
+    return df
 
-        df = pd.DataFrame(
-            rows,
-            columns=["camera", "date_yyyymmdd", "time_hhmmss", "frame_path"]
-        )
-        return df
 
+def write_frames_index(frames_dir: Path) -> int:
+    """(Re)write FRAMES_DIR/_frame_paths.parquet and .csv from the frame folders."""
     try:
         df_frames = collect_frame_paths(frames_dir)
         frames_file_parquet = frames_dir / "_frame_paths.parquet"
@@ -511,14 +531,17 @@ def main(argv: List[str]) -> int:
 
         # Minimal console message
         star = str(frames_file_parquet).rstrip(".parquet") + ".*"
+        n_scenes = len(df_frames.drop_duplicates(["camera", "date_yyyymmdd", "time_hhmmss"]))
+        print(f"Indexed {len(df_frames)} frames ({n_scenes} scenes, "
+              f"{df_frames['camera'].nunique()} cameras).")
         if parquet_ok:
             print(f"Frames DF saved to {star}")
         else:
             print(f"Frames DF saved to {frames_file_csv} (parquet engine not available)")
+        return 0
     except Exception as e:
         print(f"WARNING: Failed to build frames index: {e}", file=sys.stderr)
-
-    return 0
+        return 1
 
 
 if __name__ == "__main__":
