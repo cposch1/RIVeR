@@ -230,6 +230,14 @@ def main():
     parser.add_argument("--dyn",action="store_true",help="Process daily transformations dynamically.")
     parser.add_argument("--ref-date")
     parser.add_argument("--ref-time")
+    parser.add_argument(
+        "--gcps",
+        choices=["modelled", "manual"],
+        default="modelled",
+        help="GCP image coordinates to use: modelled (b02 output in "
+             "gcps/<camera>/_modelling/output, default) or manual picks "
+             "(gcps/<camera>)",
+    )
 
     args = parser.parse_args()
     
@@ -322,17 +330,42 @@ def main():
     
     print(f"[INFO] Processing {len(df_proc)} scenes")
 
-    gcp_files = sorted((gcps_dir / cam).glob(f"{cam}_gcps_img_*.csv"))
-    available_gcps = {}
+    # GCP image coordinates: read from the modelled (or manual) folder; the
+    # per-scene copies go to gcps/<camera>/_auto so the manual folder, which
+    # b02 reads as hand-picked data, is never touched
+    if args.gcps == "modelled":
+        gcp_src_dir = gcps_dir / cam / "_modelling" / "output"
+    else:
+        gcp_src_dir = gcps_dir / cam
+    gcp_auto_dir = gcps_dir / cam / "_auto"
+    gcp_auto_dir.mkdir(parents=True, exist_ok=True)
+
+    # Real-world GCP distances: a03aa only writes them in full mode (not with
+    # --coords-only), so derive them from the real coordinates if missing
+    dist_file = gcps_dir / cam / f"{cam}_gcps_dist.csv"
+    if not dist_file.exists():
+        real = load_gcps_real(cam)
+        with dist_file.open("w") as f:
+            for a, b in [(1, 2), (2, 3), (3, 4), (4, 1), (1, 3), (2, 4)]:
+                (xa, ya), (xb, yb) = real[f"point{a}"], real[f"point{b}"]
+                f.write(f"{round(float(np.hypot(xb - xa, yb - ya)), 2)}\n")
+        print(f"[INFO] Wrote GCP distances from real coordinates: {dist_file}")
+
+    gcp_files = sorted(gcp_src_dir.glob(f"{cam}_gcps_img_*.csv"))
+    if not gcp_files:
+        raise SystemExit(f"[ERROR] No {cam}_gcps_img_*.csv files in {gcp_src_dir}")
+    print(f"[INFO] GCPs: {args.gcps}, {len(gcp_files)} files in {gcp_src_dir}")
+
+    available_gcps = {}  # date -> sorted times with a GCP file
     for f in gcp_files:
-    
+
         stem = f.stem
         parts = stem.split("_")
-    
+
         date = parts[-2]
         time_ = parts[-1]
-    
-        available_gcps[date] = time_
+
+        available_gcps.setdefault(date, []).append(time_)
 
     # Extents handling
     if abs_mod:
@@ -402,14 +435,15 @@ def main():
 
     # ✅ reference GCPs
     gcp_ref = (
-        gcps_dir
-        / cam
+        gcp_src_dir
         / (
             f"{cam}_gcps_img_"
             f"{args.ref_date}_"
             f"{args.ref_time}.csv"
         )
-    ) 
+    )
+    if not args.dyn and not gcp_ref.exists():
+        raise SystemExit(f"[ERROR] Reference GCP file not found: {gcp_ref}")
     processed = []
     skipped = []
     transform_cache = {}
@@ -500,24 +534,18 @@ def main():
     
         try:
     
-            # ---------- GCP reuse ----------
+            # ---------- GCP handling ----------
+            # timestamp-specific GCP file for this scene (used here and by a04)
             gcp_target = (
-                gcps_dir
-                / cam
+                gcp_auto_dir
                 / f"{cam}_gcps_img_{date}_{time_}.csv"
             )
-    
-            gcp_target.parent.mkdir(
-                parents=True,
-                exist_ok=True
-            )
-    
-            # ---------- GCP handling ----------
+
             if args.dyn:
-    
+
                 # Skip dates with no available GCP file
                 if date not in available_gcps:
-    
+
                     skipped.append(
                         (
                             date,
@@ -525,45 +553,34 @@ def main():
                             "no_gcps_for_date"
                         )
                     )
-    
+
                     print(
                         f"[SKIP] {date} {time_} "
                         f"(no GCP file available for this date)"
                     )
-    
+
                     continue
-    
-                # Use the reference GCP time for that date
-                reference_time = available_gcps[date]
-    
+
+                # Same timestamp if available, else the first one of that date
+                times = available_gcps[date]
+                reference_time = time_ if time_ in times else times[0]
+
                 source_gcp = (
-                    gcps_dir
-                    / cam
+                    gcp_src_dir
                     / f"{cam}_gcps_img_{date}_{reference_time}.csv"
                 )
-    
-                # Create timestamp-specific GCP file
-                if (
-                    (not gcp_target.exists() or args.overwrite)
-                    and source_gcp != gcp_target
-                ):
-                    shutil.copy(
-                        source_gcp,
-                        gcp_target
-                    )
-    
+
             else:
-    
+
                 # Use single reference GCP file
                 source_gcp = gcp_ref
-                if (
-                    (not gcp_target.exists() or args.overwrite)
-                    and source_gcp != gcp_target
-                ):
-                    shutil.copy(
-                        source_gcp,
-                        gcp_target
-                    )
+
+            # always refresh: _auto belongs to this script, and a re-modelled
+            # source must not be shadowed by an old copy
+            shutil.copy(
+                source_gcp,
+                gcp_target
+            )
 
             # ---------- TRANSFORM ----------
             transformation = transform(
@@ -573,8 +590,9 @@ def main():
                 frame_path=frame_path,
                 absolute_coords=abs_mod,
                 extent_override=display_extent,
+                gcp_dir=gcp_auto_dir,
             )
-            
+
             with transf_file.open("w") as f:
             
                 json.dump(
@@ -588,7 +606,7 @@ def main():
             img = mpimg.imread(frame_path)
 
             # ---------- LOAD GCPs ----------
-            pts = load_gcps_img(cam, date, time_)
+            pts = load_gcps_img(cam, date, time_, gcp_auto_dir)
             (x1, y1) = pts["point1"]
             (x2, y2) = pts["point2"]
             (x3, y3) = pts["point3"]

@@ -3,8 +3,8 @@ from river.core.coordinate_transform import (oblique_view_transformation_matrix,
 import numpy as np
 
 # Function for performing transformation
-def transform(gcp_cam,gcp_date,gcp_time,df_frames=None,frame_path=None,absolute_coords=False,extent_override=None):
-    points = load_gcps_img(gcp_cam,gcp_date,gcp_time)
+def transform(gcp_cam,gcp_date,gcp_time,df_frames=None,frame_path=None,absolute_coords=False,extent_override=None,gcp_dir=None):
+    points = load_gcps_img(gcp_cam,gcp_date,gcp_time,gcp_dir)
     dist = load_dist(gcp_cam)
     if frame_path is None:
 

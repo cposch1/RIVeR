@@ -35,8 +35,6 @@ import shutil
 cam = "ilh-cam1-pt"
 direc = gcps_dir
 temp_dat = direc / 'KAN_U_hour_new.csv'
-start_date = pd.to_datetime("2025-07-01 00:00")
-end_date   = pd.to_datetime("2025-07-25 00:00")
 
 # ==================================================
 # LOAD GCPS DATA (Points 1-4)
@@ -55,6 +53,7 @@ for f in sorted(cam_dir.glob(f"{cam}_gcps_img_*.csv")):
 
         records.append({
             "datetime": dt,
+            "timestamp": dt,  # exact frame time, used for pairing
             "1_x": df_tmp.iloc[0, 0],
             "1_y": df_tmp.iloc[0, 1],
             "2_x": df_tmp.iloc[1, 0],
@@ -93,6 +92,7 @@ for f in sorted(cam_dir.glob(f"{cam}_stake_point_*.csv")):
 
         records.append({
             "datetime": dt,
+            "timestamp": dt,  # exact frame time, used for pairing
             "5_x": df_tmp.iloc[0, 0],
             "5_y": df_tmp.iloc[0, 1],
         })
@@ -150,6 +150,23 @@ df_comb = pd.merge(
     how="inner"
 )
 
+
+# ==================================================
+# PAIR GCPS 1-4 WITH STAKE POINT (same frame)
+# ==================================================
+# The stake point has more frames than GCPs 1-4; pair them by exact frame
+# timestamp so both axes come from the same frame (coverage of GCPs 1-4)
+df_pair = pd.merge(
+    df_gcps,
+    df_stake[["timestamp", "5_x", "5_y"]],
+    on="timestamp",
+    how="inner"
+)
+print(
+    f"GCP frames: {len(df_gcps)}, stake frames: {len(df_stake)}, "
+    f"paired: {len(df_pair)}"
+)
+
 # %% [markdown]
 # # 1. GCP points metrics
 
@@ -165,33 +182,21 @@ y_var = "y"
 fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 axes = axes.flatten()
 
+def pair_values(var, i):
+    # "datetime", "5_y", "1_x", ... taken as is; "x"/"y" = current GCP.
+    # Always from df_pair, so x and y belong to the same frames.
+    if var in df_pair.columns:
+        return df_pair[var].values
+    return df_pair[f"{i}_{var}"].values
+
 for i in range(1, 5):
     ax = axes[i-1]
 
-    if x_var == "datetime":
-        x = df_gcps[x_var].values
-    elif len(x_var) > 1:
-        if x_var.startswith("5"):
-            x = df_stake[x_var].values
-        else:
-            x = df_gcps[x_var].values
-        #ax.set_xlim(300,550)
-    else:
-        x = df_gcps[f"{i}_{x_var}"].values
-        #ax.set_xlim(300,550)
+    x = pair_values(x_var, i)
+    y = pair_values(y_var, i)
+    #ax.set_xlim(300,550)
+    #ax.set_ylim(300,550)
 
-    if y_var == "datetime":
-        y = df_gcps[y_var].values
-    elif len(y_var) > 1:
-        if y_var.startswith("5"):
-            y = df_stake[y_var].values
-        else:
-            y = df_gcps[y_var].values
-        #ax.set_ylim(300,550)
-    else:
-        y = df_gcps[f"{i}_{y_var}"].values
-        #ax.set_ylim(300,550)
-    
 
     # Scatter
     ax.scatter(x, y, color="blue")
@@ -414,6 +419,7 @@ for f in sorted(mod_in.glob(f"{cam}_gcps_img_*.csv")):
 
         records.append({
             "datetime": dt,
+            "timestamp": dt,  # exact frame time, used for pairing
             "1_x": df_tmp.iloc[0, 0],
             "1_y": df_tmp.iloc[0, 1],
             "2_x": df_tmp.iloc[1, 0],
@@ -452,6 +458,7 @@ for f in sorted(mod_in.glob(f"{cam}_stake_point_*.csv")):
 
         records.append({
             "datetime": dt,
+            "timestamp": dt,  # exact frame time, used for pairing
             "5_x": df_tmp.iloc[0, 0],
             "5_y": df_tmp.iloc[0, 1],
         })
@@ -472,10 +479,12 @@ df_stake["datetime"] = pd.to_datetime(df_stake["datetime"]).dt.normalize()
 # ==================================================
 # COMBINE DFs
 # ==================================================
+# pair by exact frame timestamp (a date-only merge would pair every GCP
+# frame with every stake frame of that day)
 df_5gcp = pd.merge(
     df_gcps,
-    df_stake,
-    on="datetime",
+    df_stake[["timestamp", "5_x", "5_y"]],
+    on="timestamp",
     how="inner"
 )
 

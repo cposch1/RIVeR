@@ -35,9 +35,11 @@ def load_frame(df_frames,gcp_cam,gcp_date,gcp_time):
 
 
 # Function that loads GCP image coordinates
-def load_gcps_img(gcp_cam,gcp_date,gcp_time):
+# gcp_dir: folder holding the CSVs (default: gcps_dir/<camera>, the manual picks)
+def load_gcps_img(gcp_cam,gcp_date,gcp_time,gcp_dir=None):
     points_img = []
-    gcps_img_file = gcps_dir / gcp_cam / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
+    folder = Path(gcp_dir) if gcp_dir is not None else gcps_dir / gcp_cam
+    gcps_img_file = folder / (f"{gcp_cam}_gcps_img_{gcp_date}_{gcp_time}.csv")
     with open(gcps_img_file, newline="") as f:
         reader = csv.reader(f)
         for row in reader:
