@@ -2,25 +2,43 @@
 #
 # Download the first frame (0000000000.jpg) of every date/time folder from the
 # server, keeping the folder structure, plus the _frame_paths.* index files.
-#
-# Works from any level: a single camera folder or a folder holding several
-# cameras (e.g. the whole frames directory).
-#
-# Usage:
-#   bash c01_first_frame_download.sh [REMOTE_DIR] [LOCAL_DIR]
-#
-#   REMOTE_DIR  folder on the server   (default: $REMOTE_DEFAULT below)
-#   LOCAL_DIR   local target folder    (default: ~/Desktop/<name of REMOTE_DIR>)
-#               Git Bash (/c/...) and Windows (C:/...) paths both work.
-#
-# Examples:
-#   bash c01_first_frame_download.sh                                   # all cameras
-#   bash c01_first_frame_download.sh /home/cposch/RIVeR/testing/data/frames/lev5-cam2-lake
+# Run with -h for usage and examples.
 
 set -o pipefail
 
 SSH="cposch@octopus.unil.ch"
 REMOTE_DEFAULT="/home/cposch/RIVeR/testing/data/frames"
+
+usage() {
+    cat <<EOF
+Download the first frame (0000000000.jpg) of every date/time folder from
+$SSH, keeping the folder structure, plus the _frame_paths.* index files.
+
+Usage:
+  bash c01_first_frame_download.sh [REMOTE_DIR] [LOCAL_DIR]
+
+  REMOTE_DIR  folder on the server (Linux path)
+              default: $REMOTE_DEFAULT
+              Either the whole frames folder (all cameras) or one camera folder.
+  LOCAL_DIR   local target folder
+              default: ~/Desktop/<name of REMOTE_DIR>
+              Git Bash (/c/Users/...) and Windows (C:/Users/...) paths both work.
+
+Examples:
+  All cameras, into /c/Users/cposch1/Desktop/frames/<camera>/<date>/<time>/:
+    bash c01_first_frame_download.sh /home/cposch/RIVeR/testing/data/frames /c/Users/cposch1/Desktop/frames
+
+  Only one camera, into /c/Users/cposch1/Desktop/lev5-cam2-lake/<date>/<time>/:
+    bash c01_first_frame_download.sh /home/cposch/RIVeR/testing/data/frames/lev5-cam2-lake /c/Users/cposch1/Desktop/lev5-cam2-lake
+
+  (The _frame_paths.* index files live in the frames folder, so they are only
+  downloaded when REMOTE_DIR is the whole frames folder.)
+EOF
+}
+
+case "$1" in
+    -h|--help) usage; exit 0 ;;
+esac
 
 REMOTE_BASE="${1:-$REMOTE_DEFAULT}"
 REMOTE_BASE="${REMOTE_BASE%/}"
