@@ -342,12 +342,21 @@ y_var = "5_y"
 x = df_m[x_var]
 y = df_m[y_var]
 
-plt.figure(figsize=(5,5))
-plt.scatter(x, y, color="blue")
+plt.figure(figsize=(6,5))
 
-plt.xlabel(x_var)
-plt.ylabel(y_var)
-plt.grid(True)
+# colour points by date
+sc = plt.scatter(x, y, c=mdates.date2num(df_m["datetime"]), cmap="viridis")
+
+plt.colorbar(
+    sc,
+    label="Date",
+    ticks=mdates.AutoDateLocator(),
+    format=mdates.DateFormatter("%Y-%m-%d")
+)
+
+plt.xlabel("cumulative PDH (°C)")
+plt.ylabel("Y in image coordinate space (pixel)")
+#plt.grid(True)
 
 mask = np.isfinite(x) & np.isfinite(y)
     
@@ -361,6 +370,8 @@ if np.sum(mask) > 1:
     b = result.slope
     c = result.intercept
     r = result.rvalue
+    p = result.pvalue
+    p_txt = "p < 0.01" if p < 0.01 else f"p = {p:.3f}"
 
     x_fit = np.linspace(
         np.min(x[mask]),
@@ -377,7 +388,69 @@ if np.sum(mask) > 1:
         linewidth=2,
         label=(
             f"y = {b:.3f}x + {c:.3f}\n"
-            f"r = {r:.3f}"
+            f"r = {r:.3f}, {p_txt}, n = {np.sum(mask)}"
+        )
+    )
+
+    plt.legend()
+
+plt.savefig("scat.svg")
+plt.show()
+
+# %%
+x_var = "PDH"   # daily PDH (sum of hourly PDH per day)
+y_var = "5_y"
+
+x = df_m[x_var]
+y = df_m[y_var]
+
+plt.figure(figsize=(6,5))
+
+# colour points by date
+sc = plt.scatter(x, y, c=mdates.date2num(df_m["datetime"]), cmap="viridis")
+
+plt.colorbar(
+    sc,
+    label="Date",
+    ticks=mdates.AutoDateLocator(),
+    format=mdates.DateFormatter("%Y-%m-%d")
+)
+
+plt.xlabel(x_var)
+plt.ylabel(y_var)
+plt.grid(True)
+
+mask = np.isfinite(x) & np.isfinite(y)
+
+if np.sum(mask) > 1:
+
+    result = linregress(
+        x[mask],
+        y[mask]
+    )
+
+    b = result.slope
+    c = result.intercept
+    r = result.rvalue
+    p = result.pvalue
+    p_txt = "p < 0.01" if p < 0.01 else f"p = {p:.3f}"
+
+    x_fit = np.linspace(
+        np.min(x[mask]),
+        np.max(x[mask]),
+        100
+    )
+
+    y_fit = b * x_fit + c
+
+    plt.plot(
+        x_fit,
+        y_fit,
+        color="red",
+        linewidth=2,
+        label=(
+            f"y = {b:.3f}x + {c:.3f}\n"
+            f"r = {r:.3f}, {p_txt}, n = {np.sum(mask)}"
         )
     )
 
