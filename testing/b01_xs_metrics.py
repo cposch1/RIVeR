@@ -722,11 +722,14 @@ break_date = pd.to_datetime("2025-08-06")
 
 from scipy.stats import pearsonr
 
+# colour map for the XS dates
+date_cmap = "viridis"
+
 # ==================================================
 # SCATTER PLOT: Channel width vs Air temperature
 # ==================================================
 
-fig, ax = plt.subplots(figsize=(8, 8))
+fig, ax = plt.subplots(figsize=(9, 8))
 
 # Transparent background
 fig.patch.set_alpha(0)
@@ -764,28 +767,44 @@ df_after = df_combined[
 
 
 # --------------------------------------------------
-# Scatter
+# Scatter, coloured by date
 # --------------------------------------------------
 
-ax.scatter(
-    df_before["temp"],
-    df_before["xs_length"],
+sc = ax.scatter(
+    df_combined["temp"],
+    df_combined["xs_length"],
+    c=mdates.date2num(df_combined["datetime"]),
+    cmap=date_cmap,
     marker="o",
-    facecolors="none",
-    edgecolors="cyan",
-    linewidths=0.8,
-    label=f"Before {break_date.date()}"
+    edgecolors="white",
+    linewidths=0.5
 )
 
-ax.scatter(
-    df_after["temp"],
-    df_after["xs_length"],
-    marker="o",
-    facecolors="none",
-    edgecolors="orange",
-    linewidths=0.8,
-    label=f"After {break_date.date()}"
+# Colour bar ticks every 2 days, anchored at the break date
+k = np.arange(
+    (df_combined["datetime"].min() - break_date).days // 2 - 1,
+    (df_combined["datetime"].max() - break_date).days // 2 + 2
 )
+cbar_ticks = mdates.date2num(break_date + pd.to_timedelta(2 * k, unit="D"))
+
+# Colour bar with dates, break date marked
+cbar = fig.colorbar(
+    sc,
+    ax=ax,
+    ticks=cbar_ticks,
+    format=mdates.DateFormatter("%Y-%m-%d"),
+    fraction=0.046,
+    pad=0.04
+)
+cbar.ax.axhline(
+    mdates.date2num(break_date),
+    color="white",
+    linestyle="--",
+    linewidth=1
+)
+cbar.set_label("Date", color="white")
+cbar.ax.tick_params(colors="white")
+cbar.outline.set_edgecolor("white")
 
 # --------------------------------------------------
 # Date labels
@@ -808,7 +827,7 @@ for _, row in df_combined.iterrows():
 # Regression helper
 # --------------------------------------------------
 
-def add_regression(df, color):
+def add_regression(df, color, label):
 
     if len(df) < 2:
         return np.nan, np.nan, np.nan, np.nan
@@ -833,7 +852,8 @@ def add_regression(df, color):
         y_line,
         linestyle="--",
         linewidth=1.5,
-        color=color
+        color=color,
+        label=label
     )
 
     return m, b, r, p
@@ -844,12 +864,14 @@ def add_regression(df, color):
 
 m1, b1, r1, p1 = add_regression(
     df_before,
-    "cyan"
+    "cyan",
+    f"Before {break_date.date()}"
 )
 
 m2, b2, r2, p2 = add_regression(
     df_after,
-    "orange"
+    "orange",
+    f"After {break_date.date()}"
 )
 
 # --------------------------------------------------
@@ -928,9 +950,11 @@ leg.get_frame().set_alpha(0.5)
 
 plt.tight_layout()
 
+# tight bbox: colour bar + square axes otherwise clip the y label
 plt.savefig(
     "scatter_channel_width_vs_temp.svg",
-    transparent=True
+    transparent=True,
+    bbox_inches="tight"
 )
 
 plt.show()
@@ -972,6 +996,9 @@ pdh_start = pd.to_datetime("2025-07-14 00:00")
 pdh_end   = pd.to_datetime("2025-09-01 00:00")
 
 break_date = pd.to_datetime("2025-08-06")
+
+# colour map for the XS dates
+date_cmap = "viridis"
 
 # cum_PDH is zero at this date (start of melt season)
 pdh_ref_date = pd.to_datetime("2025-05-01 00:00")
@@ -1081,6 +1108,12 @@ df_xs_pdh = pd.concat(
     axis=1
 ).dropna()
 
+# change in channel width since the previous day; NaN where the previous XS
+# is not exactly one day earlier (gaps), so it matches the 24 h PDH window
+df_xs_pdh["d_xs_length"] = df_xs_pdh["xs_length"].diff().where(
+    df_xs_pdh["datetime"].diff() == pd.Timedelta("1D")
+)
+
 df_pdh_before = df_xs_pdh[df_xs_pdh["datetime"] < break_date].copy()
 df_pdh_after = df_xs_pdh[df_xs_pdh["datetime"] >= break_date].copy()
 
@@ -1105,6 +1138,40 @@ def pdh_regress(x, y):
 
     return {"n": n, "slope": res.slope, "intercept": res.intercept,
             "r": res.rvalue, "r2": res.rvalue**2, "p": res.pvalue}
+
+# ==================================================
+# DATE COLOUR BAR HELPER
+# ==================================================
+
+def add_date_colorbar(fig, ax, sc, dates, **cbar_kw):
+
+    # ticks every 2 days, anchored at the break date
+    k = np.arange(
+        (dates.min() - break_date).days // 2 - 1,
+        (dates.max() - break_date).days // 2 + 2
+    )
+
+    cbar = fig.colorbar(
+        sc,
+        ax=ax,
+        ticks=mdates.date2num(break_date + pd.to_timedelta(2 * k, unit="D")),
+        format=mdates.DateFormatter("%Y-%m-%d"),
+        **{"fraction": 0.046, "pad": 0.04, **cbar_kw}
+    )
+
+    # break date marked
+    cbar.ax.axhline(
+        mdates.date2num(break_date),
+        color="white",
+        linestyle="--",
+        linewidth=1
+    )
+
+    cbar.set_label("Date", color="white")
+    cbar.ax.tick_params(colors="white")
+    cbar.outline.set_edgecolor("white")
+
+    return cbar
 
 # %%
 # ==================================================
@@ -1311,10 +1378,12 @@ def scatter_width_pdh(
     fname,
     stats_xy=(0.05, 0.95),
     stats_va="top",
-    legend_loc="lower right"
+    legend_loc="lower right",
+    y_col="xs_length",
+    ylabel="Channel width (m)"
 ):
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(9, 8))
 
     # Transparent background
     fig.patch.set_alpha(0)
@@ -1323,7 +1392,25 @@ def scatter_width_pdh(
     stats_lines = []
 
     # --------------------------------------------------
-    # Scatter + regression, before / after break date
+    # Scatter, coloured by date
+    # --------------------------------------------------
+
+    d = df_xs_pdh.dropna(subset=[x_col, y_col])
+
+    sc = ax.scatter(
+        d[x_col],
+        d[y_col],
+        c=mdates.date2num(d["datetime"]),
+        cmap=date_cmap,
+        marker="o",
+        edgecolors="white",
+        linewidths=0.5
+    )
+
+    add_date_colorbar(fig, ax, sc, d["datetime"])
+
+    # --------------------------------------------------
+    # Regression, before / after break date
     # --------------------------------------------------
 
     for df, color, label in [
@@ -1331,17 +1418,9 @@ def scatter_width_pdh(
         (df_pdh_after, "orange", f"After {break_date.date()}"),
     ]:
 
-        ax.scatter(
-            df[x_col],
-            df["xs_length"],
-            marker="o",
-            facecolors="none",
-            edgecolors=color,
-            linewidths=0.8,
-            label=label
-        )
+        df = df.dropna(subset=[x_col, y_col])
 
-        s = pdh_regress(df[x_col], df["xs_length"])
+        s = pdh_regress(df[x_col], df[y_col])
 
         if np.isfinite(s["slope"]):
 
@@ -1352,7 +1431,8 @@ def scatter_width_pdh(
                 s["slope"] * x_line + s["intercept"],
                 linestyle="--",
                 linewidth=1.5,
-                color=color
+                color=color,
+                label=label
             )
 
         p_txt = "p < 0.01" if s["p"] < 0.01 else f"p = {s['p']:.3f}"
@@ -1367,11 +1447,11 @@ def scatter_width_pdh(
     # Date labels
     # --------------------------------------------------
 
-    for _, row in df_xs_pdh.iterrows():
+    for _, row in d.iterrows():
 
         ax.annotate(
             row["datetime"].strftime("%m-%d"),
-            (row[x_col], row["xs_length"]),
+            (row[x_col], row[y_col]),
             textcoords="offset points",
             xytext=(3, 3),
             fontsize=8,
@@ -1401,7 +1481,7 @@ def scatter_width_pdh(
     # --------------------------------------------------
 
     ax.set_xlabel(xlabel, color="white")
-    ax.set_ylabel("Channel width (m)", color="white")
+    ax.set_ylabel(ylabel, color="white")
 
     ax.set_box_aspect(1)
 
@@ -1424,7 +1504,8 @@ def scatter_width_pdh(
     leg.get_frame().set_alpha(0.5)
 
     plt.tight_layout()
-    plt.savefig(fname, transparent=True)
+    # tight bbox: colour bar + square axes otherwise clip the y label
+    plt.savefig(fname, transparent=True, bbox_inches="tight")
     plt.show()
 
 
@@ -1447,6 +1528,40 @@ scatter_width_pdh(
     stats_xy=(0.05, 0.05),
     stats_va="bottom",
     legend_loc="upper right"
+)
+
+# %%
+# ==================================================
+# SCATTER PLOT: Change in channel width vs PDH (preceding window)
+# ==================================================
+
+scatter_width_pdh(
+    pdh_col,
+    f"PDH, preceding {pdh_window} (°C)",
+    "scatter_d_channel_width_vs_pdh.svg",
+    y_col="d_xs_length",
+    ylabel="Change in channel width since previous day (m)",
+    # points cluster around 0 on the left -> stats box and legend into the empty corners
+    stats_xy=(0.05, 0.05),
+    stats_va="bottom",
+    legend_loc="upper left"
+)
+
+# %%
+# ==================================================
+# SCATTER PLOT: Change in channel width vs air temperature (preceding window)
+# ==================================================
+
+scatter_width_pdh(
+    tmean_col,
+    f"Mean air temperature, preceding {pdh_window} (°C)",
+    "scatter_d_channel_width_vs_temp.svg",
+    y_col="d_xs_length",
+    ylabel="Change in channel width since previous day (m)",
+    # points cluster around 0 on the left -> stats box and legend into the empty corners
+    stats_xy=(0.05, 0.05),
+    stats_va="bottom",
+    legend_loc="upper left"
 )
 
 # %%
@@ -1570,6 +1685,1067 @@ leg.get_frame().set_alpha(0.5)
 plt.tight_layout()
 
 plt.savefig("r_channel_width_vs_pdh_window.svg", transparent=True)
+plt.show()
+
+# %% [markdown]
+# # Hysteresis and response time
+#
+# Three plots, one question each (daily width at 12:00 vs PDH, split at `break_date`):
+#
+# 1. **Is there a lag?** Trajectories of width vs PDH with arrows in time order.
+#    Anticlockwise = width lags the forcing. With PDH that has memory (right panel)
+#    the loop collapses when the memory matches the lag.
+# 2. **How large is the lag?** r of width vs PDH with exponential memory τ
+#    (hourly PDH before the image weighted by exp(-s/τ), expressed per day like
+#    `PDH_24h`). The τ with the highest r is the response time; half of the
+#    adjustment happens within τ·ln2.
+# 3. **How sensitive is the width?** Width vs PDH with memory `hyst_tau`; the
+#    slope per period is the sensitivity (m per °C of PDH).
+#
+# Width and PDH both decline through the season, so raw r and slopes include this
+# seasonal trend (upper bound). The dashed curves / "trend removed" values remove a
+# linear trend from width and PDH within each period (lower bound, as part of the
+# real response declines with the season too). The truth lies in between.
+
+# %%
+# ==================================================
+# USER SETTINGS
+# ==================================================
+
+# PDH memory (e-folding time, h) used in the trajectory and sensitivity plots
+hyst_tau = 48
+
+# e-folding times (h) tested in the memory scan
+hyst_taus = [6, 12, 18, 24, 36, 48, 60, 72, 96, 120, 168, 240]
+
+# ==================================================
+# PDH WITH EXPONENTIAL MEMORY
+# ==================================================
+# weighted mean of hourly PDH over the hours before t (weights exp(-s/tau)),
+# times 24 -> per day, comparable to PDH_24h; shift(1) keeps only hours before t
+
+def pdh_ewm(tau_h):
+    return (
+        df_pdh["PDH"]
+        .fillna(0)
+        .ewm(alpha=1 - np.exp(-1 / tau_h), adjust=False)
+        .mean()
+        .shift(1)
+        * 24
+    )
+
+
+ewm_col = f"PDH_ewm{hyst_tau}"
+
+df_hyst = df_xs_pdh[["datetime", "xs_length", pdh_col]].copy().reset_index(drop=True)
+df_hyst[ewm_col] = pdh_ewm(hyst_tau).reindex(df_hyst["datetime"]).to_numpy()
+df_hyst["regime"] = np.where(df_hyst["datetime"] < break_date, "before", "after")
+
+# days since first XS (for the seasonal trend)
+df_hyst["t_day"] = (
+    df_hyst["datetime"] - df_hyst["datetime"].iloc[0]
+).dt.total_seconds() / 86400
+
+regime_style = {
+    "before": ("cyan", f"Before {break_date.date()}"),
+    "after": ("orange", f"After {break_date.date()}"),
+}
+
+# ==================================================
+# HELPERS
+# ==================================================
+
+def minmax(a):
+    a = np.asarray(a, dtype=float)
+    return (a - a.min()) / (a.max() - a.min())
+
+
+def loop_area(x, y):
+    # signed area of the (closed) path in min-max normalised space,
+    # > 0 = anticlockwise (forcing to the right, width up) = width lags
+    x, y = minmax(x), minmax(y)
+    return 0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
+
+
+def detrend(a, t):
+    # residuals of a linear fit against time (seasonal trend removed)
+    a = np.asarray(a, dtype=float)
+    return a - np.polyval(np.polyfit(t, a, 1), t)
+
+
+print(df_hyst)
+
+# %%
+# ==================================================
+# TRAJECTORY PLOTS: Channel width vs PDH (arrows in time order)
+# ==================================================
+
+fig, axes = plt.subplots(1, 2, figsize=(17, 8))
+
+# Transparent background
+fig.patch.set_alpha(0)
+
+d_last = df_hyst[df_hyst["regime"] == "before"].iloc[-1]
+d_first = df_hyst[df_hyst["regime"] == "after"].iloc[0]
+
+for ax, x_col, xlabel in [
+    (axes[0], pdh_col, f"PDH, preceding {pdh_window} (°C)"),
+    (axes[1], ewm_col, f"PDH, exp. memory τ = {hyst_tau} h (°C)"),
+]:
+
+    ax.set_facecolor("none")
+
+    area_lines = []
+
+    # --------------------------------------------------
+    # Arrows in time order, per regime
+    # --------------------------------------------------
+
+    for regime, (color, label) in regime_style.items():
+
+        d = df_hyst[df_hyst["regime"] == regime]
+        x = d[x_col].to_numpy()
+        y = d["xs_length"].to_numpy()
+
+        for i in range(len(d) - 1):
+            ax.annotate(
+                "",
+                xy=(x[i + 1], y[i + 1]),
+                xytext=(x[i], y[i]),
+                arrowprops=dict(
+                    arrowstyle="-|>",
+                    color=color,
+                    linewidth=1.2,
+                    shrinkA=4,
+                    shrinkB=4
+                )
+            )
+
+        # legend entry
+        ax.plot([], [], color=color, linewidth=1.2, label=label)
+
+        area_lines.append(f"{label}: {loop_area(x, y):+.2f}")
+
+    # gap between the regimes
+    ax.annotate(
+        "",
+        xy=(d_first[x_col], d_first["xs_length"]),
+        xytext=(d_last[x_col], d_last["xs_length"]),
+        arrowprops=dict(
+            arrowstyle="-|>",
+            color="white",
+            linewidth=1,
+            linestyle="--",
+            alpha=0.6,
+            shrinkA=4,
+            shrinkB=4
+        )
+    )
+    ax.plot(
+        [], [],
+        color="white",
+        linestyle="--",
+        alpha=0.6,
+        label=f"Gap {d_last['datetime']:%m-%d} → {d_first['datetime']:%m-%d} (no XS)"
+    )
+
+    # --------------------------------------------------
+    # Points, coloured by date
+    # --------------------------------------------------
+
+    sc = ax.scatter(
+        df_hyst[x_col],
+        df_hyst["xs_length"],
+        c=mdates.date2num(df_hyst["datetime"]),
+        cmap=date_cmap,
+        marker="o",
+        edgecolors="white",
+        linewidths=0.5,
+        zorder=3
+    )
+
+    for _, row in df_hyst.iterrows():
+
+        ax.annotate(
+            row["datetime"].strftime("%m-%d"),
+            (row[x_col], row["xs_length"]),
+            textcoords="offset points",
+            xytext=(3, 3),
+            fontsize=8,
+            color="white"
+        )
+
+    # --------------------------------------------------
+    # Loop area
+    # --------------------------------------------------
+
+    ax.text(
+        0.97,
+        0.05,
+        "Signed loop area\n(> 0 anticlockwise = width lags)\n" + "\n".join(area_lines),
+        transform=ax.transAxes,
+        color="white",
+        ha="right",
+        va="bottom",
+        bbox=dict(
+            facecolor="black",
+            alpha=0.2,
+            edgecolor="white"
+        )
+    )
+
+    # --------------------------------------------------
+    # Axis styling
+    # --------------------------------------------------
+
+    ax.set_xlabel(xlabel, color="white")
+    ax.set_ylabel("Channel width (m)", color="white")
+
+    ax.set_box_aspect(1)
+
+    ax.tick_params(colors="white")
+    for spine in ax.spines.values():
+        spine.set_color("white")
+
+    ax.grid(True, color="white", alpha=0.2)
+
+    leg = ax.legend(loc="upper left")
+
+    for text in leg.get_texts():
+        text.set_color("white")
+
+    leg.get_frame().set_facecolor("none")
+    leg.get_frame().set_alpha(0.5)
+
+add_date_colorbar(fig, axes, sc, df_hyst["datetime"], shrink=0.8)
+
+# no tight_layout here (not compatible with the shared colour bar); tight bbox trims the margins
+plt.savefig("trajectory_channel_width_vs_pdh.svg", transparent=True, bbox_inches="tight")
+plt.show()
+
+# %%
+# ==================================================
+# MEMORY SCAN: r of channel width vs PDH with memory τ
+# ==================================================
+
+rows = []
+
+for tau in hyst_taus:
+
+    f_tau = pdh_ewm(tau).reindex(df_hyst["datetime"]).to_numpy()
+
+    for regime in regime_style:
+
+        m = (df_hyst["regime"] == regime).to_numpy()
+        x = f_tau[m]
+        y = df_hyst["xs_length"].to_numpy()[m]
+        t = df_hyst["t_day"].to_numpy()[m]
+
+        rows.append({
+            "tau_h": tau,
+            "regime": regime,
+            "r": pdh_regress(x, y)["r"],
+            # seasonal trend removed from width and PDH
+            "r_detrended": pdh_regress(detrend(x, t), detrend(y, t))["r"],
+        })
+
+df_memory = pd.DataFrame(rows)
+
+print(df_memory.pivot(index="tau_h", columns="regime", values=["r", "r_detrended"]).round(3))
+
+df_memory.to_csv("xs_pdh_memory_scan.csv", index=False)
+
+# --------------------------------------------------
+# Plot
+# --------------------------------------------------
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Transparent background
+fig.patch.set_alpha(0)
+ax.set_facecolor("none")
+
+for regime, (color, label) in regime_style.items():
+
+    d = df_memory[df_memory["regime"] == regime]
+
+    best = d.loc[d["r"].idxmax()]
+    ax.plot(
+        d["tau_h"],
+        d["r"],
+        marker="o",
+        linewidth=1.5,
+        color=color,
+        label=(
+            f"{label}: max r = {best['r']:.2f} at τ = {best['tau_h']:.0f} h "
+            f"(half response {best['tau_h'] * np.log(2):.0f} h)"
+        )
+    )
+
+    best_d = d.loc[d["r_detrended"].idxmax()]
+    ax.plot(
+        d["tau_h"],
+        d["r_detrended"],
+        marker="o",
+        markersize=4,
+        linewidth=1,
+        linestyle="--",
+        color=color,
+        label=f"{label}, trend removed: max r = {best_d['r_detrended']:.2f} at τ = {best_d['tau_h']:.0f} h"
+    )
+
+ax.axhline(0, color="white", linewidth=0.8)
+
+ax.text(
+    0.97,
+    0.05,
+    "solid: raw (includes seasonal trend, upper bound)\n"
+    "dashed: seasonal trend removed (lower bound)",
+    transform=ax.transAxes,
+    color="white",
+    ha="right",
+    va="bottom",
+    bbox=dict(
+        facecolor="black",
+        alpha=0.2,
+        edgecolor="white"
+    )
+)
+
+ax.set_xscale("log")
+ax.set_xticks(hyst_taus)
+ax.set_xticklabels([str(t) for t in hyst_taus])
+ax.minorticks_off()
+ax.set_ylim(-1, 1)
+
+ax.set_xlabel("PDH memory, e-folding time τ (h)", color="white")
+ax.set_ylabel("r (channel width vs PDH with memory τ)", color="white")
+
+ax.tick_params(colors="white")
+for spine in ax.spines.values():
+    spine.set_color("white")
+
+ax.grid(True, color="white", alpha=0.2)
+
+leg = ax.legend(loc="lower left", fontsize=9)
+
+for text in leg.get_texts():
+    text.set_color("white")
+
+leg.get_frame().set_facecolor("none")
+leg.get_frame().set_alpha(0.5)
+
+plt.tight_layout()
+plt.savefig("memory_scan_channel_width_pdh.svg", transparent=True, bbox_inches="tight")
+plt.show()
+
+# %%
+# ==================================================
+# SCATTER PLOT: Channel width vs PDH with memory (sensitivity)
+# ==================================================
+
+fig, ax = plt.subplots(figsize=(9, 8))
+
+# Transparent background
+fig.patch.set_alpha(0)
+ax.set_facecolor("none")
+
+# --------------------------------------------------
+# Scatter, coloured by date
+# --------------------------------------------------
+
+sc = ax.scatter(
+    df_hyst[ewm_col],
+    df_hyst["xs_length"],
+    c=mdates.date2num(df_hyst["datetime"]),
+    cmap=date_cmap,
+    marker="o",
+    edgecolors="white",
+    linewidths=0.5
+)
+
+add_date_colorbar(fig, ax, sc, df_hyst["datetime"])
+
+# --------------------------------------------------
+# Regression per period + sensitivity
+# --------------------------------------------------
+
+stats_lines = []
+
+for regime, (color, label) in regime_style.items():
+
+    d = df_hyst[df_hyst["regime"] == regime]
+    x = d[ewm_col].to_numpy()
+    y = d["xs_length"].to_numpy()
+    t = d["t_day"].to_numpy()
+
+    s = pdh_regress(x, y)
+
+    # slope with the seasonal trend held fixed (width ~ PDH + time)
+    X = np.column_stack([np.ones_like(x), x, t])
+    slope_trend = np.linalg.lstsq(X, y, rcond=None)[0][1]
+
+    x_line = np.linspace(x.min(), x.max(), 100)
+
+    ax.plot(
+        x_line,
+        s["slope"] * x_line + s["intercept"],
+        linestyle="--",
+        linewidth=1.5,
+        color=color,
+        label=label
+    )
+
+    p_txt = "p < 0.01" if s["p"] < 0.01 else f"p = {s['p']:.3f}"
+
+    stats_lines.append(
+        f"{label}: r = {s['r']:.2f}, {p_txt}, n = {s['n']}\n"
+        f"sensitivity {s['slope']:.3f} m/°C ({100 * s['slope'] / y.mean():.1f} %/°C of mean width)\n"
+        f"trend removed: {slope_trend:.3f} m/°C"
+    )
+
+# --------------------------------------------------
+# Date labels
+# --------------------------------------------------
+
+for _, row in df_hyst.iterrows():
+
+    ax.annotate(
+        row["datetime"].strftime("%m-%d"),
+        (row[ewm_col], row["xs_length"]),
+        textcoords="offset points",
+        xytext=(3, 3),
+        fontsize=8,
+        color="white"
+    )
+
+# --------------------------------------------------
+# Regression statistics
+# --------------------------------------------------
+
+ax.text(
+    0.97,
+    0.05,
+    "\n\n".join(stats_lines),
+    transform=ax.transAxes,
+    color="white",
+    ha="right",
+    va="bottom",
+    fontsize=9,
+    bbox=dict(
+        facecolor="black",
+        alpha=0.2,
+        edgecolor="white"
+    )
+)
+
+# --------------------------------------------------
+# Axis styling
+# --------------------------------------------------
+
+ax.set_xlabel(f"PDH, exp. memory τ = {hyst_tau} h (°C)", color="white")
+ax.set_ylabel("Channel width (m)", color="white")
+
+ax.set_box_aspect(1)
+
+ax.tick_params(colors="white")
+for spine in ax.spines.values():
+    spine.set_color("white")
+
+ax.grid(True, color="white", alpha=0.2)
+
+leg = ax.legend(loc="upper left")
+
+for text in leg.get_texts():
+    text.set_color("white")
+
+leg.get_frame().set_facecolor("none")
+leg.get_frame().set_alpha(0.5)
+
+plt.tight_layout()
+# tight bbox: colour bar + square axes otherwise clip the y label
+plt.savefig("scatter_channel_width_vs_pdh_memory.svg", transparent=True, bbox_inches="tight")
+plt.show()
+
+# %%
+# ==================================================
+# BEST PDH MEMORY PER PERIOD (from the memory scan)
+# ==================================================
+# τ with the highest raw r for each period; before and after points then use
+# their own memory instead of the common hyst_tau
+
+best_tau = {
+    regime: int(
+        df_memory.loc[df_memory.loc[df_memory["regime"] == regime, "r"].idxmax(), "tau_h"]
+    )
+    for regime in regime_style
+}
+
+print("best τ per period (h):", best_tau)
+
+df_best = df_hyst.copy()
+df_best["PDH_best"] = np.nan
+
+for regime, tau in best_tau.items():
+    m = df_best["regime"] == regime
+    df_best.loc[m, "PDH_best"] = pdh_ewm(tau).reindex(df_best.loc[m, "datetime"]).to_numpy()
+
+best_xlabel = (
+    f"PDH, best memory per period "
+    f"(τ before = {best_tau['before']} h, τ after = {best_tau['after']} h) (°C)"
+)
+
+# ==================================================
+# TRAJECTORY PLOT: Channel width vs PDH with best memory per period
+# ==================================================
+
+fig, ax = plt.subplots(figsize=(9, 8))
+
+# Transparent background
+fig.patch.set_alpha(0)
+ax.set_facecolor("none")
+
+area_lines = []
+
+# --------------------------------------------------
+# Arrows in time order, per regime
+# --------------------------------------------------
+
+for regime, (color, label) in regime_style.items():
+
+    d = df_best[df_best["regime"] == regime]
+    x = d["PDH_best"].to_numpy()
+    y = d["xs_length"].to_numpy()
+
+    for i in range(len(d) - 1):
+        ax.annotate(
+            "",
+            xy=(x[i + 1], y[i + 1]),
+            xytext=(x[i], y[i]),
+            arrowprops=dict(
+                arrowstyle="-|>",
+                color=color,
+                linewidth=1.2,
+                shrinkA=4,
+                shrinkB=4
+            )
+        )
+
+    # legend entry
+    ax.plot([], [], color=color, linewidth=1.2, label=f"{label} (τ = {best_tau[regime]} h)")
+
+    area_lines.append(f"{label}: {loop_area(x, y):+.2f}")
+
+# gap between the regimes
+b_last = df_best[df_best["regime"] == "before"].iloc[-1]
+b_first = df_best[df_best["regime"] == "after"].iloc[0]
+
+ax.annotate(
+    "",
+    xy=(b_first["PDH_best"], b_first["xs_length"]),
+    xytext=(b_last["PDH_best"], b_last["xs_length"]),
+    arrowprops=dict(
+        arrowstyle="-|>",
+        color="white",
+        linewidth=1,
+        linestyle="--",
+        alpha=0.6,
+        shrinkA=4,
+        shrinkB=4
+    )
+)
+ax.plot(
+    [], [],
+    color="white",
+    linestyle="--",
+    alpha=0.6,
+    label=f"Gap {b_last['datetime']:%m-%d} → {b_first['datetime']:%m-%d} (no XS)"
+)
+
+# --------------------------------------------------
+# Points, coloured by date
+# --------------------------------------------------
+
+sc = ax.scatter(
+    df_best["PDH_best"],
+    df_best["xs_length"],
+    c=mdates.date2num(df_best["datetime"]),
+    cmap=date_cmap,
+    marker="o",
+    edgecolors="white",
+    linewidths=0.5,
+    zorder=3
+)
+
+add_date_colorbar(fig, ax, sc, df_best["datetime"])
+
+for _, row in df_best.iterrows():
+
+    ax.annotate(
+        row["datetime"].strftime("%m-%d"),
+        (row["PDH_best"], row["xs_length"]),
+        textcoords="offset points",
+        xytext=(3, 3),
+        fontsize=8,
+        color="white"
+    )
+
+# --------------------------------------------------
+# Loop area
+# --------------------------------------------------
+
+ax.text(
+    0.97,
+    0.05,
+    "Signed loop area\n(> 0 anticlockwise = width lags)\n" + "\n".join(area_lines),
+    transform=ax.transAxes,
+    color="white",
+    ha="right",
+    va="bottom",
+    bbox=dict(
+        facecolor="black",
+        alpha=0.2,
+        edgecolor="white"
+    )
+)
+
+# --------------------------------------------------
+# Axis styling
+# --------------------------------------------------
+
+ax.set_xlabel(best_xlabel, color="white")
+ax.set_ylabel("Channel width (m)", color="white")
+
+ax.set_box_aspect(1)
+
+ax.tick_params(colors="white")
+for spine in ax.spines.values():
+    spine.set_color("white")
+
+ax.grid(True, color="white", alpha=0.2)
+
+leg = ax.legend(loc="upper left")
+
+for text in leg.get_texts():
+    text.set_color("white")
+
+leg.get_frame().set_facecolor("none")
+leg.get_frame().set_alpha(0.5)
+
+plt.tight_layout()
+# tight bbox: colour bar + square axes otherwise clip the y label
+plt.savefig("trajectory_channel_width_vs_pdh_best_tau.svg", transparent=True, bbox_inches="tight")
+plt.show()
+
+# %%
+# ==================================================
+# SCATTER PLOT: Channel width vs PDH with best memory per period (sensitivity)
+# ==================================================
+
+fig, ax = plt.subplots(figsize=(9, 8))
+
+# Transparent background
+fig.patch.set_alpha(0)
+ax.set_facecolor("none")
+
+# --------------------------------------------------
+# Scatter, coloured by date
+# --------------------------------------------------
+
+sc = ax.scatter(
+    df_best["PDH_best"],
+    df_best["xs_length"],
+    c=mdates.date2num(df_best["datetime"]),
+    cmap=date_cmap,
+    marker="o",
+    edgecolors="white",
+    linewidths=0.5
+)
+
+add_date_colorbar(fig, ax, sc, df_best["datetime"])
+
+# --------------------------------------------------
+# Regression per period + sensitivity
+# --------------------------------------------------
+
+stats_lines = []
+
+for regime, (color, label) in regime_style.items():
+
+    d = df_best[df_best["regime"] == regime]
+    x = d["PDH_best"].to_numpy()
+    y = d["xs_length"].to_numpy()
+    t = d["t_day"].to_numpy()
+
+    s = pdh_regress(x, y)
+
+    # slope with the seasonal trend held fixed (width ~ PDH + time)
+    X = np.column_stack([np.ones_like(x), x, t])
+    slope_trend = np.linalg.lstsq(X, y, rcond=None)[0][1]
+
+    x_line = np.linspace(x.min(), x.max(), 100)
+
+    ax.plot(
+        x_line,
+        s["slope"] * x_line + s["intercept"],
+        linestyle="--",
+        linewidth=1.5,
+        color=color,
+        label=f"{label} (τ = {best_tau[regime]} h)"
+    )
+
+    p_txt = "p < 0.01" if s["p"] < 0.01 else f"p = {s['p']:.3f}"
+
+    stats_lines.append(
+        f"{label}: r = {s['r']:.2f}, {p_txt}, n = {s['n']}\n"
+        f"sensitivity {s['slope']:.3f} m/°C ({100 * s['slope'] / y.mean():.1f} %/°C of mean width)\n"
+        f"trend removed: {slope_trend:.3f} m/°C"
+    )
+
+# --------------------------------------------------
+# Date labels
+# --------------------------------------------------
+
+for _, row in df_best.iterrows():
+
+    ax.annotate(
+        row["datetime"].strftime("%m-%d"),
+        (row["PDH_best"], row["xs_length"]),
+        textcoords="offset points",
+        xytext=(3, 3),
+        fontsize=8,
+        color="white"
+    )
+
+# --------------------------------------------------
+# Regression statistics
+# --------------------------------------------------
+
+ax.text(
+    0.97,
+    0.05,
+    "\n\n".join(stats_lines),
+    transform=ax.transAxes,
+    color="white",
+    ha="right",
+    va="bottom",
+    fontsize=9,
+    bbox=dict(
+        facecolor="black",
+        alpha=0.2,
+        edgecolor="white"
+    )
+)
+
+# --------------------------------------------------
+# Axis styling
+# --------------------------------------------------
+
+ax.set_xlabel(best_xlabel, color="white")
+ax.set_ylabel("Channel width (m)", color="white")
+
+ax.set_box_aspect(1)
+
+ax.tick_params(colors="white")
+for spine in ax.spines.values():
+    spine.set_color("white")
+
+ax.grid(True, color="white", alpha=0.2)
+
+leg = ax.legend(loc="upper left")
+
+for text in leg.get_texts():
+    text.set_color("white")
+
+leg.get_frame().set_facecolor("none")
+leg.get_frame().set_alpha(0.5)
+
+plt.tight_layout()
+# tight bbox: colour bar + square axes otherwise clip the y label
+plt.savefig("scatter_channel_width_vs_pdh_best_tau.svg", transparent=True, bbox_inches="tight")
+plt.show()
+
+# %%
+# ==================================================
+# COMBINED: hysteresis + linear regression
+# left: PDH over preceding 24 h | right: PDH with memory τ (range)
+# ==================================================
+
+# ==================================================
+# USER SETTINGS
+# ==================================================
+
+# PDH memory (h): lower, central, upper -> points at the central τ, bars and
+# regression envelope over the range
+tau_range = (36, 48, 60)
+
+from scipy.stats import t as t_dist
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.legend_handler import HandlerTuple
+
+tau_cols = [f"PDH_ewm{tau}" for tau in tau_range]
+
+df_comb_h = df_hyst[["datetime", "xs_length", pdh_col, "regime", "t_day"]].copy()
+
+for tau, col in zip(tau_range, tau_cols):
+    df_comb_h[col] = pdh_ewm(tau).reindex(df_comb_h["datetime"]).to_numpy()
+
+# ==================================================
+# HELPERS
+# ==================================================
+
+def fit_stats(x, y, t):
+    # raw regression + the same with the seasonal (linear time) trend removed
+    s = pdh_regress(x, y)
+
+    # slope with the trend held fixed (width ~ PDH + time)
+    X = np.column_stack([np.ones_like(x), x, t])
+    slope_trend = np.linalg.lstsq(X, y, rcond=None)[0][1]
+
+    # partial r with the trend removed from both, p with n - 3 degrees of freedom
+    r_trend = pdh_regress(detrend(x, t), detrend(y, t))["r"]
+    dof = len(y) - 3
+    p_trend = 2 * t_dist.sf(abs(r_trend) * np.sqrt(dof / (1 - r_trend**2)), dof)
+
+    return {
+        **s,
+        "rel": 100 * s["slope"] / np.mean(y),
+        "slope_trend": slope_trend,
+        "r_trend": r_trend,
+        "p_trend": p_trend,
+        "area": loop_area(x, y),
+    }
+
+
+def p_range(ps):
+    # central τ value with range over all τ
+    if max(ps) < 0.01:
+        return "p < 0.01"
+    return f"p = {ps[1]:.3f} ({min(ps):.3f}–{max(ps):.3f})"
+
+
+def val_range(vals, fmt):
+    # central τ value with range over all τ
+    return f"{fmt.format(vals[1])} ({fmt.format(min(vals))}–{fmt.format(max(vals))})"
+
+
+def draw_arrows(ax, x, y, color):
+    for i in range(len(x) - 1):
+        ax.annotate(
+            "",
+            xy=(x[i + 1], y[i + 1]),
+            xytext=(x[i], y[i]),
+            arrowprops=dict(
+                arrowstyle="-|>",
+                color=color,
+                linewidth=1.2,
+                shrinkA=4,
+                shrinkB=4
+            )
+        )
+
+
+# ==================================================
+# PLOT
+# ==================================================
+
+fig, axes = plt.subplots(1, 2, figsize=(18, 10))
+
+# Transparent background
+fig.patch.set_alpha(0)
+
+c_last = df_comb_h[df_comb_h["regime"] == "before"].iloc[-1]
+c_first = df_comb_h[df_comb_h["regime"] == "after"].iloc[0]
+
+for panel, ax in enumerate(axes):
+
+    ax.set_facecolor("none")
+
+    x_col = pdh_col if panel == 0 else tau_cols[1]
+
+    handles, labels = [], []
+
+    for regime, (color, label) in regime_style.items():
+
+        d = df_comb_h[df_comb_h["regime"] == regime]
+        y = d["xs_length"].to_numpy()
+        t = d["t_day"].to_numpy()
+
+        if panel == 0:
+
+            # --------------------------------------------------
+            # Left: PDH over preceding 24 h
+            # --------------------------------------------------
+
+            x = d[pdh_col].to_numpy()
+
+            draw_arrows(ax, x, y, color)
+
+            # straight line from the first to the last day of the period
+            # (= closing line of the loop area)
+            h_chord, = ax.plot(
+                [x[0], x[-1]],
+                [y[0], y[-1]],
+                linestyle=":",
+                linewidth=1.5,
+                color=color
+            )
+
+            handles.append((Line2D([0], [0], color=color, linewidth=1.2), h_chord))
+            labels.append(
+                f"{label} (n = {len(y)})"
+            )
+
+        else:
+
+            # --------------------------------------------------
+            # Right: PDH with memory, points at central τ, range over τ
+            # --------------------------------------------------
+
+            X = d[tau_cols].to_numpy()
+            x = X[:, 1]
+            sts = [fit_stats(X[:, k], y, t) for k in range(len(tau_cols))]
+
+            # PDH range over τ as horizontal bars
+            ax.errorbar(
+                x,
+                y,
+                xerr=[x - X.min(axis=1), X.max(axis=1) - x],
+                fmt="none",
+                ecolor=color,
+                elinewidth=1,
+                capsize=2,
+                alpha=0.8,
+                zorder=2
+            )
+
+            # regression envelope over τ + central line
+            x_grid = np.linspace(X.min(), X.max(), 200)
+            lines = np.array([s["slope"] * x_grid + s["intercept"] for s in sts])
+            ax.fill_between(
+                x_grid,
+                lines.min(axis=0),
+                lines.max(axis=0),
+                color=color,
+                alpha=0.15,
+                linewidth=0
+            )
+
+            x_line = np.linspace(x.min(), x.max(), 100)
+            h_line, = ax.plot(
+                x_line,
+                sts[1]["slope"] * x_line + sts[1]["intercept"],
+                linestyle="--",
+                linewidth=1.5,
+                color=color
+            )
+
+            handles.append((Patch(color=color, alpha=0.15, linewidth=0), h_line))
+            s48 = sts[1]  # fit at the middle τ of tau_range (48 h)
+            p48 = "p < 0.01" if s48["p"] < 0.01 else f"p = {s48['p']:.2f}"
+            p48_trend = "p < 0.01" if s48["p_trend"] < 0.01 else f"p = {s48['p_trend']:.2f}"
+
+            labels.append(
+                f"{label} (n = {s48['n']}):\n"
+                f"Raw data:                         slope {s48['slope']:.2f} m/°C, r = {s48['r']:.2f}, {p48}\n"
+                f"Seasonal trend removed: slope {s48['slope_trend']:.2f} m/°C, r = {s48['r_trend']:.2f}, {p48_trend}"
+            )
+
+    # --------------------------------------------------
+    # Gap between the regimes (path panel only)
+    # --------------------------------------------------
+
+    if panel == 0:
+
+        ax.annotate(
+            "",
+            xy=(c_first[x_col], c_first["xs_length"]),
+            xytext=(c_last[x_col], c_last["xs_length"]),
+            arrowprops=dict(
+                arrowstyle="-|>",
+                color="white",
+                linewidth=1,
+                linestyle="--",
+                alpha=0.6,
+                shrinkA=4,
+                shrinkB=4
+            )
+        )
+        handles.append(Line2D([0], [0], color="white", linestyle="--", alpha=0.6))
+        labels.append(f"Inactive surface hydrology {c_last['datetime']:%Y-%m-%d} → {c_first['datetime']:%Y-%m-%d}")
+
+
+    # --------------------------------------------------
+    # Points, coloured by date
+    # --------------------------------------------------
+
+    sc = ax.scatter(
+        df_comb_h[x_col],
+        df_comb_h["xs_length"],
+        c=mdates.date2num(df_comb_h["datetime"]),
+        cmap=date_cmap,
+        marker="o",
+        edgecolors="white",
+        linewidths=0.5,
+        zorder=3
+    )
+
+    for _, row in df_comb_h.iterrows():
+
+        ax.annotate(
+            row["datetime"].strftime("%m-%d"),
+            (row[x_col], row["xs_length"]),
+            textcoords="offset points",
+            xytext=(3, 3),
+            fontsize=8,
+            color="white"
+        )
+
+    # --------------------------------------------------
+    # Axis styling
+    # --------------------------------------------------
+
+    if panel == 0:
+        ax.set_xlabel(f"PDH, preceding {pdh_window} (°C)", color="white")
+    else:
+        ax.set_xlabel(
+            f"PDH, τ = {tau_range[1]}±{int(tau_range[1]-tau_range[0])}h (°C)",
+            color="white"
+        )
+    ax.set_ylabel("Channel width (m)", color="white")
+
+    ax.set_box_aspect(1)
+
+    ax.tick_params(colors="white")
+    for spine in ax.spines.values():
+        spine.set_color("white")
+
+    ax.grid(True, color="white", alpha=0.2)
+
+    # --------------------------------------------------
+    # Legend (below the panel, long labels)
+    # --------------------------------------------------
+
+    leg = ax.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.1),
+        fontsize=9,
+        handler_map={tuple: HandlerTuple(ndivide=None)}
+    )
+
+    for text in leg.get_texts():
+        text.set_color("white")
+
+    leg.get_frame().set_facecolor("none")
+    leg.get_frame().set_alpha(0.5)
+
+add_date_colorbar(fig, axes, sc, df_comb_h["datetime"], shrink=0.6)
+
+# no tight_layout here (not compatible with the shared colour bar); tight bbox trims the margins
+plt.savefig("hysteresis_regression_channel_width_vs_pdh.svg", transparent=True, bbox_inches="tight")
 plt.show()
 
 # %%
