@@ -32,7 +32,7 @@ xs_dir = bathy_dir# / "_old_data"
 
 pt_files = [
     #"Stage01-data-2026-04-24 10_36_57.csv",
-    #"Stage02-data-2026-04-24 10_40_48.csv",
+    "Stage02-data-2026-04-24 10_40_48.csv",
 ]
 
 start_date = pd.to_datetime("2025-07-14 00:00")
@@ -44,6 +44,116 @@ end_date   = pd.to_datetime("2025-09-01 00:00")
 # "pt" = align to PT coverage
 # --------------------------------------------------
 time_reference = "xs"   # or "pt"
+
+# ==================================================
+# EXPORT: additional black copies of every plot
+# ==================================================
+# Plots are displayed and saved white-on-transparent as before. With
+# export_black = True, every plt.savefig(...) additionally writes
+# "<name>_black.<ext>" in which all white elements (axes, ticks, text, grid,
+# white lines and markers) are black; coloured elements are unchanged and the
+# background stays transparent. With export_black_png = True the black version
+# is also saved as "<name>_black.png" on a white background.
+# Single plots: plt.savefig(..., black=False).
+
+export_black = True
+
+# black version also as PNG on a white background, resolution (dpi)
+export_black_png = True
+export_png_dpi = 300
+
+import matplotlib.colors as mcolors
+from matplotlib.collections import Collection
+from matplotlib.lines import Line2D as _Line2D
+from matplotlib.patches import Patch as _Patch
+from matplotlib.text import Text as _Text
+from pathlib import Path
+
+
+def _whites_to_black(fig):
+    # recolour all white elements of fig to black; returns the changes for undo
+    undo = []
+    done = set()
+    backgrounds = {id(fig.patch)} | {id(ax.patch) for ax in fig.axes}
+
+    def recolour(getter, setter):
+        old = getter()
+        rgba = np.array(mcolors.to_rgba_array(old), dtype=float)
+        white = np.all(rgba[:, :3] == 1, axis=1)
+        if len(rgba) == 0 or not white.any():
+            return
+        rgba[white, :3] = 0
+        setter(tuple(rgba[0]) if len(rgba) == 1 and not isinstance(old, np.ndarray) else rgba)
+        undo.append((setter, old))
+
+    def visit(a):
+        if a is None or id(a) in done or id(a) in backgrounds:
+            return
+        done.add(id(a))
+        if isinstance(a, _Text):
+            recolour(a.get_color, a.set_color)
+            visit(a.get_bbox_patch())
+            visit(getattr(a, "arrow_patch", None))
+        elif isinstance(a, _Line2D):
+            recolour(a.get_color, a.set_color)
+            recolour(a.get_markeredgecolor, a.set_markeredgecolor)
+            recolour(a.get_markerfacecolor, a.set_markerfacecolor)
+        elif isinstance(a, _Patch):
+            recolour(a.get_edgecolor, a.set_edgecolor)
+            recolour(a.get_facecolor, a.set_facecolor)
+        elif isinstance(a, Collection):
+            recolour(a.get_edgecolor, a.set_edgecolor)
+            if a.get_array() is None:  # colour-mapped faces (e.g. dates) stay
+                recolour(a.get_facecolor, a.set_facecolor)
+
+    for a in fig.findobj():
+        visit(a)
+
+    return undo
+
+
+# keep the original plt.savefig once (re-running this cell is safe)
+if "_savefig_white" not in globals():
+    _savefig_white = plt.savefig
+
+
+def _savefig_with_black(fname, *args, black=None, **kwargs):
+
+    _savefig_white(fname, *args, **kwargs)
+
+    if not (export_black if black is None else black):
+        return
+
+    fig = plt.gcf()
+    fig.canvas.draw()  # create all ticks before recolouring
+    undo = _whites_to_black(fig)
+
+    try:
+        p = Path(fname)
+        _savefig_white(p.with_name(f"{p.stem}_black{p.suffix}"), *args, **kwargs)
+
+        if export_black_png:
+            # same black version as PNG on a white (opaque) background
+            face, alpha = fig.patch.get_facecolor(), fig.patch.get_alpha()
+            fig.patch.set_facecolor("white")
+            fig.patch.set_alpha(1)
+            try:
+                _savefig_white(
+                    p.with_name(f"{p.stem}_black.png"),
+                    *args,
+                    **{**kwargs, "transparent": False, "dpi": export_png_dpi}
+                )
+            finally:
+                fig.patch.set_facecolor(face)
+                fig.patch.set_alpha(alpha)
+
+    finally:
+        # back to white for the displayed figure
+        for setter, old in reversed(undo):
+            setter(old)
+
+
+plt.savefig = _savefig_with_black
 
 # %%
 # ==================================================
@@ -1014,6 +1124,116 @@ pdh_col = f"PDH_{pdh_window}"
 tmean_col = f"t_mean_{pdh_window}"
 
 # ==================================================
+# EXPORT: additional black copies of every plot
+# ==================================================
+# Plots are displayed and saved white-on-transparent as before. With
+# export_black = True, every plt.savefig(...) additionally writes
+# "<name>_black.<ext>" in which all white elements (axes, ticks, text, grid,
+# white lines and markers) are black; coloured elements are unchanged and the
+# background stays transparent. With export_black_png = True the black version
+# is also saved as "<name>_black.png" on a white background.
+# Single plots: plt.savefig(..., black=False).
+
+export_black = globals().get("export_black", True)  # value from the first cell if run
+
+# black version also as PNG on a white background, resolution (dpi)
+export_black_png = globals().get("export_black_png", True)
+export_png_dpi = globals().get("export_png_dpi", 300)
+
+import matplotlib.colors as mcolors
+from matplotlib.collections import Collection
+from matplotlib.lines import Line2D as _Line2D
+from matplotlib.patches import Patch as _Patch
+from matplotlib.text import Text as _Text
+from pathlib import Path
+
+
+def _whites_to_black(fig):
+    # recolour all white elements of fig to black; returns the changes for undo
+    undo = []
+    done = set()
+    backgrounds = {id(fig.patch)} | {id(ax.patch) for ax in fig.axes}
+
+    def recolour(getter, setter):
+        old = getter()
+        rgba = np.array(mcolors.to_rgba_array(old), dtype=float)
+        white = np.all(rgba[:, :3] == 1, axis=1)
+        if len(rgba) == 0 or not white.any():
+            return
+        rgba[white, :3] = 0
+        setter(tuple(rgba[0]) if len(rgba) == 1 and not isinstance(old, np.ndarray) else rgba)
+        undo.append((setter, old))
+
+    def visit(a):
+        if a is None or id(a) in done or id(a) in backgrounds:
+            return
+        done.add(id(a))
+        if isinstance(a, _Text):
+            recolour(a.get_color, a.set_color)
+            visit(a.get_bbox_patch())
+            visit(getattr(a, "arrow_patch", None))
+        elif isinstance(a, _Line2D):
+            recolour(a.get_color, a.set_color)
+            recolour(a.get_markeredgecolor, a.set_markeredgecolor)
+            recolour(a.get_markerfacecolor, a.set_markerfacecolor)
+        elif isinstance(a, _Patch):
+            recolour(a.get_edgecolor, a.set_edgecolor)
+            recolour(a.get_facecolor, a.set_facecolor)
+        elif isinstance(a, Collection):
+            recolour(a.get_edgecolor, a.set_edgecolor)
+            if a.get_array() is None:  # colour-mapped faces (e.g. dates) stay
+                recolour(a.get_facecolor, a.set_facecolor)
+
+    for a in fig.findobj():
+        visit(a)
+
+    return undo
+
+
+# keep the original plt.savefig once (re-running this cell is safe)
+if "_savefig_white" not in globals():
+    _savefig_white = plt.savefig
+
+
+def _savefig_with_black(fname, *args, black=None, **kwargs):
+
+    _savefig_white(fname, *args, **kwargs)
+
+    if not (export_black if black is None else black):
+        return
+
+    fig = plt.gcf()
+    fig.canvas.draw()  # create all ticks before recolouring
+    undo = _whites_to_black(fig)
+
+    try:
+        p = Path(fname)
+        _savefig_white(p.with_name(f"{p.stem}_black{p.suffix}"), *args, **kwargs)
+
+        if export_black_png:
+            # same black version as PNG on a white (opaque) background
+            face, alpha = fig.patch.get_facecolor(), fig.patch.get_alpha()
+            fig.patch.set_facecolor("white")
+            fig.patch.set_alpha(1)
+            try:
+                _savefig_white(
+                    p.with_name(f"{p.stem}_black.png"),
+                    *args,
+                    **{**kwargs, "transparent": False, "dpi": export_png_dpi}
+                )
+            finally:
+                fig.patch.set_facecolor(face)
+                fig.patch.set_alpha(alpha)
+
+    finally:
+        # back to white for the displayed figure
+        for setter, old in reversed(undo):
+            setter(old)
+
+
+plt.savefig = _savefig_with_black
+
+# ==================================================
 # LOAD XS DATA
 # ==================================================
 
@@ -1278,6 +1498,146 @@ leg.get_frame().set_alpha(0.5)
 plt.tight_layout()
 
 plt.savefig("channel-width_pdh_cum.svg", transparent=True)
+plt.show()
+
+# %%
+# ==================================================
+# PLOT: Channel width, PDH and air temperature
+# ==================================================
+
+# line + axis colours: distinct (also for colour blindness), readable on dark
+# and on white backgrounds
+pdh_color = "#c04fd0"   # purple
+temp_color = "#2e9e5b"  # green
+
+# daily mean 2 m air temperature (KAN_U daily data, as in the temperature plots above)
+kan_u_day = pd.read_csv("KAN_U_day_new.csv", index_col=0, parse_dates=True)
+t_daily = kan_u_day["t_u"].loc[pdh_start:pdh_end]
+
+fig, ax1 = plt.subplots(figsize=(14, 6))
+
+# Make background transparent
+fig.patch.set_alpha(0)
+ax1.set_facecolor("none")
+
+ax1.plot(
+    df_xs["datetime"],
+    df_xs["xs_length"],
+    linestyle="None",
+    marker="o",
+    markerfacecolor="white",
+    markeredgecolor="white",
+    label="Channel width"
+)
+
+# Axis styling (white)
+ax1.set_xlabel("Date", color="white")
+ax1.set_ylabel("Channel width (m)", color="white")
+
+ax1.set_ylim(0, 25)
+ax1.tick_params(colors="white")
+for spine in ax1.spines.values():
+    spine.set_color("white")
+
+ax1.grid(True, color="white", alpha=0.2)
+
+ax1.set_xlim(pdh_start, pdh_end)
+
+# Daily ticks at 00:00 across FULL plot range
+daily_ticks = pd.date_range(
+    start=pdh_start.normalize(),
+    end=pdh_end.normalize(),
+    freq="1D"
+)
+ax1.set_xticks(daily_ticks)
+ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+plt.setp(ax1.get_xticklabels(), rotation=90, ha="center", color="white")
+
+# --------------------------------------------------
+# Secondary / tertiary y axes: ticks on the grid lines of the primary axis
+# --------------------------------------------------
+
+y0, y1 = ax1.get_ylim()
+n_int = len([t for t in ax1.get_yticks() if y0 <= t <= y1]) - 1
+
+
+def aligned_axis(ax, vmin, vmax, start_zero=False):
+    # smallest round tick step for which n_int intervals cover [vmin, vmax]
+    steps = sorted(m * 10.0**e for e in range(-2, 5) for m in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8))
+    for step in steps:
+        lo = 0.0 if start_zero else np.floor(vmin / step) * step
+        if lo + n_int * step >= vmax:
+            break
+    ax.set_ylim(lo, lo + n_int * step)
+    ax.set_yticks(lo + step * np.arange(n_int + 1))
+
+
+pdh_sel = df_pdh.loc[pdh_start:pdh_end]
+
+# Secondary axis: PDH over preceding window (dashed)
+ax2 = ax1.twinx()
+ax2.set_facecolor("none")
+
+ax2.plot(
+    pdh_sel.index,
+    pdh_sel[pdh_col],
+    linestyle="--",
+    linewidth=1.2,
+    color=pdh_color,
+    label=f"KAN_U PDH, preceding {pdh_window}"
+)
+
+aligned_axis(ax2, 0, pdh_sel[pdh_col].max(), start_zero=True)
+ax2.set_ylabel(f"PDH, preceding {pdh_window} (°C)", color=pdh_color)
+
+# Third axis: daily mean 2 m air temperature (outer right), plotted at midday
+ax3 = ax1.twinx()
+ax3.set_facecolor("none")
+ax3.spines["right"].set_position(("axes", 1.08))
+
+ax3.plot(
+    t_daily.index + pd.Timedelta("12h"),
+    t_daily.values,
+    linestyle="-",
+    linewidth=1.2,
+    marker="o",
+    markersize=3,
+    color=temp_color,
+    label="KAN_U mean air temperature"
+)
+
+# 0 °C reference (PDH only accumulates above it)
+ax3.axhline(0, color=temp_color, linestyle=":", linewidth=1, alpha=0.7)
+
+aligned_axis(ax3, t_daily.min(), t_daily.max())
+ax3.set_ylabel("Mean air temperature (°C)", color=temp_color)
+
+# white frame, coloured right spines / ticks per axis
+for ax, color in [(ax2, pdh_color), (ax3, temp_color)]:
+    for spine in ax.spines.values():
+        spine.set_color("white")
+    ax.spines["right"].set_color(color)
+    ax.tick_params(axis="y", colors=color)
+
+# One legend for all axes (white text), on top axis so lines don't cover it
+handles, labels = [], []
+for ax in [ax1, ax2, ax3]:
+    h, l = ax.get_legend_handles_labels()
+    handles += h
+    labels += l
+
+# upper centre: free during the August cold spell (upper left covers the temperature line)
+leg = ax3.legend(handles, labels, loc="upper center")
+
+for text in leg.get_texts():
+    text.set_color("white")
+
+leg.get_frame().set_facecolor("none")
+leg.get_frame().set_alpha(0.5)
+
+plt.tight_layout()
+
+plt.savefig("channel-width_pdh_temp.svg", transparent=True)
 plt.show()
 
 # %%
