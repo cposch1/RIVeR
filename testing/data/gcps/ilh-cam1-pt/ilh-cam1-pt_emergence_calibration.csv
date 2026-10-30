@@ -1,2 +1,2 @@
-point,date,time,x,y_base,y_top,pole_px,emergence_m,px_per_m
-GCP4,20250701,120000,1645,739,678,61,0.72,84.7222
+point,date,time,x,y_base,y_top,pole_px,emergence_m,px_per_m,note
+GCP4,20250701,120000,1645,739,678,61,0.93,65.5914,"emergence estimated by Christoph Posch from the GCP marker board size on the 2025-07-01 12:00 image (set 2026-10-30); replaces 0.72 m, which was measured in the field on 2025-04-26"
