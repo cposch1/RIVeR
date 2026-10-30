@@ -1032,10 +1032,10 @@ for ax, (gcp_id, g) in zip(axes.flatten(), df_env.groupby("gcp_id")):
     ols = df_lin.set_index("gcp_id").loc[gcp_id]
 
     ax.fill_between(g["timestamp"], g["y_p2.5"], g["y_p97.5"],
-                    color="tab:purple", alpha=0.12, lw=0, label="95 %")
+                    color="#e7298a", alpha=0.12, lw=0, label="95 %")
     ax.fill_between(g["timestamp"], g[f"y_p{lo:g}"], g[f"y_p{hi:g}"],
-                    color="tab:purple", alpha=0.3, lw=0, label=f"low / high ({lo:g}-{hi:g} %)")
-    ax.plot(g["timestamp"], g["y_central"], color="tab:purple", lw=1.5, label="central")
+                    color="#e7298a", alpha=0.3, lw=0, label=f"low / high ({lo:g}-{hi:g} %)")
+    ax.plot(g["timestamp"], g["y_central"], color="#e7298a", lw=1.5, label="central")
     ax.plot(g["timestamp"], ols["intercept"] + ols["slope"] * g["y5"],
             color="tab:blue", lw=1, label=f"current output (OLS), slope {ols['slope']:.2f}")
     ax.plot(df_5gcp["timestamp"], df_5gcp[f"{gcp_id}_y"], linestyle="None", marker="o", markersize=6,
@@ -1056,7 +1056,7 @@ plt.show()
 # PLOT: what changed in the GCP model (documentation)
 # ==================================================
 # Same July picks, different fits: current OLS (blue; treats the stake picks as exact -> too flat), central fit
-# with pick errors in GCP and stake (purple, used above), reverse fit and anchoring at the first pick (not used,
+# with pick errors in GCP and stake (magenta, used above), reverse fit and anchoring at the first pick (not used,
 # shown for comparison) and the ratio of image scales from the first-frame homography (geometry).
 pairs = df_5gcp.sort_values("timestamp").reset_index(drop=True)
 xs5 = pairs["5_y"].values.astype(float)
@@ -1095,7 +1095,7 @@ for i in range(1, 5):
     fits[i] = slope_fits(xs5, pairs[f"{i}_y"].values.astype(float))
     fits[i]["geometry"] = scale[i] / scale_stake
 
-FIT_COL = {"ols": "tab:blue", "central": "tab:purple", "reverse": "tab:cyan", "anchored": "0.45", "geometry": "#a6611a"}
+FIT_COL = {"ols": "tab:blue", "central": "#e7298a", "reverse": "tab:cyan", "anchored": "0.45", "geometry": "#a6611a"}
 pxm_cal = float(pd.read_csv(cam_dir / f"{cam}_emergence_calibration.csv").iloc[0]["px_per_m"])
 tls_tab = df_tls.set_index("gcp_id")
 e4 = df_env[df_env["gcp_id"] == 4].set_index("timestamp").sort_index()
@@ -2217,9 +2217,9 @@ ax = axes[0]
 ax.plot(seas(low_ku).index, seas(low_ku), color=CMP_COL["KAN_U"], lw=1.5, label="KAN_U observed")
 ax.plot(fixed_ku.index, fixed_ku, color=CMP_COL["KAN_U"], lw=1.5, ls="--",
         label=f"KAN_U from its own temperature, fixed {1000 * ddf_w:.1f} mm per °C·d ({cmp_t0:%m-%d} → {cmp_tw:%m-%d})")
-ax.plot(fixed_cam.index, fixed_cam, color=CMP_COL["estimate"], lw=1.8,
+ax.plot(fixed_cam.index, fixed_cam, color=CMP_COL["estimate"], lw=1.6, ls=":",
         label="camera site from its temperature, same fixed factor")
-ax.plot(low_est.index, low_est, color=CMP_COL["estimate"], lw=1.6, ls=":",
+ax.plot(low_est.index, low_est, color=CMP_COL["estimate"], lw=1.8,
         label="camera site from its temperature, KAN_U factor per period (used above)")
 ser = seas(cam_low["stake 5 × 1.9"])
 ax.plot(ser.index, ser, color=CMP_COL["camera site"], lw=1, alpha=0.6, label="camera site observed: stake 5 × 1.9")
@@ -2233,7 +2233,7 @@ ax.grid(True, alpha=0.3)
 ax = axes[1]
 ax.bar(mid, per["KAN_U_mm_per_degC_d"], width=width, color="0.75", edgecolor="k", lw=0.6,
        label="KAN_U lowering per °C·d of its own PDH")
-ax.axhline(1000 * ddf_w, color=CMP_COL["estimate"], lw=1.5, ls="--", label=f"fixed factor ({1000 * ddf_w:.1f})")
+ax.axhline(1000 * ddf_w, color=CMP_COL["estimate"], lw=1.5, ls=":", label=f"fixed factor ({1000 * ddf_w:.1f})")
 for m_, v, d_pdh, d_low in zip(mid, per["KAN_U_mm_per_degC_d"], per["KAN_U_PDH"], per["KAN_U_lowering_m"]):
     if np.isnan(v):
         what = f"snowfall\n{100 * d_low:+.0f} cm" if d_low < 0 else f"no melt\n{100 * d_low:+.0f} cm"
