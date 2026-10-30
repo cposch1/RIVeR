@@ -14,6 +14,10 @@ Inputs:
   --json PATH
       Path to a reference transformation JSON file:
       <camera>_transform_<YYYYMMDD>_<HHMMSS>.json
+  --gcp-set central|low|high (with --gcps modelled)
+      Use a b02 uncertainty set (gcps/<camera>/_modelling/output_<set>)
+      instead of _modelling/output; outputs then go to
+      rect_dir/<camera>/gcpset_<set>/ (log: auto_log_gcpset_<set>.txt)
 
 Requirements:
   - FRAMES_DIR/_frame_paths.parquet must exist
@@ -237,9 +241,20 @@ def main():
              "gcps/<camera>/_modelling/output, default) or manual picks "
              "(gcps/<camera>)",
     )
+    parser.add_argument(
+        "--gcp-set",
+        choices=["central", "low", "high"],
+        default=None,
+        help="With --gcps modelled: use the b02 uncertainty set "
+             "gcps/<camera>/_modelling/output_<set> instead of output; "
+             "outputs go to rect_dir/<camera>/gcpset_<set>/",
+    )
 
     args = parser.parse_args()
-    
+
+    if args.gcp_set and args.gcps != "modelled":
+        parser.error("--gcp-set needs --gcps modelled")
+
     if not args.dyn:
         if args.ref_date is None:
             parser.error(
@@ -332,7 +347,10 @@ def main():
     # GCP image coordinates are read directly from the modelled (or manual)
     # folder; nothing is copied or written there
     if args.gcps == "modelled":
-        gcp_src_dir = gcps_dir / cam / "_modelling" / "output"
+        gcp_src_dir = (
+            gcps_dir / cam / "_modelling"
+            / (f"output_{args.gcp_set}" if args.gcp_set else "output")
+        )
     else:
         gcp_src_dir = gcps_dir / cam
 
@@ -402,7 +420,11 @@ def main():
             rect_dir
             / cam
         )
-    
+
+    # b02 uncertainty sets keep their outputs apart from the main run
+    if args.gcp_set:
+        output_root = output_root / f"gcpset_{args.gcp_set}"
+
     full_dir = (
         output_root
         / "auto_orthorectification_imgs"
@@ -790,7 +812,9 @@ def main():
             )
             print(f"[FAIL] {date} {time_}: {e}")
 
-    log_file = rect_dir / cam / "auto_log.txt"
+    log_file = rect_dir / cam / (
+        f"auto_log_gcpset_{args.gcp_set}.txt" if args.gcp_set else "auto_log.txt"
+    )
     with log_file.open("w") as f:
     
         f.write("AUTO ORTHORECTIFICATION LOG\n")

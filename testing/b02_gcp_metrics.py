@@ -868,6 +868,190 @@ for stake_file in stake_files:
     print(f"Written: {out_file.name}")
 
 # %% [markdown]
+# ## GCP model with pick errors in GCPs and stake: central fit and uncertainty envelope
+#
+# The regression above treats the stake picks as exact, which makes the slopes too flat.
+# Here the GCP picks and the stake picks both carry the same pick error (px):
+# - **central**: orthogonal (total least squares) fit of each GCP y on stake 5 y
+# - **uncertainty**: parametric bootstrap with that pick error, in the July picks and in the
+#   stake pick of every modelled frame -> percentiles of every modelled GCP position
+# - **low / high**: the envelope edges (`env_pct`, default 16th / 84th percentile = ±1 sigma);
+#   low = GCPs move less (plane higher), high = GCPs move more (plane lower)
+#
+# Written next to `_modelling/output` (unchanged, still the default for a03b / a04):
+# `_modelling/output_central`, `output_low`, `output_high`, `_modelling/input/df_tls.csv`
+# (fit and slope percentiles per GCP) and `_modelling/gcp_model_envelope.csv` (percentiles per
+# frame and GCP, also of the movement since the first frame, for the vertical estimation).
+# Reprocess a set with `a03b_orthorectify_auto.py ... --gcp-set central|low|high` and
+# `a04_cross_section.py ... --gcp-set central|low|high`.
+
+# %%
+# ==================================================
+# SETTINGS
+# ==================================================
+import re
+
+env_pct = (16, 84)      # envelope written to output_low / output_high; (2.5, 97.5) = 95 %
+n_draws = 2000          # bootstrap draws
+rng = np.random.default_rng(42)
+
+
+def tls_fit(x, y):
+    # orthogonal regression: same pick error in x and y (both in px)
+    xc, yc = x - x.mean(), y - y.mean()
+    sxx, syy, sxy = (xc ** 2).sum(), (yc ** 2).sum(), (xc * yc).sum()
+    b = (syy - sxx + np.sqrt((syy - sxx) ** 2 + 4 * sxy ** 2)) / (2 * sxy)
+    return b, y.mean() - b * x.mean()
+
+
+# ==================================================
+# CENTRAL FIT AND PICK ERROR (July picks, paired as above)
+# ==================================================
+x5 = df_5gcp["5_y"].values.astype(float)
+tls_rows = []
+
+for gcp_id in range(1, 5):
+
+    y = df_5gcp[f"{gcp_id}_y"].values.astype(float)
+    b, a = tls_fit(x5, y)
+
+    # perpendicular residuals -> pick error per coordinate (px)
+    d = (y - (a + b * x5)) / np.sqrt(1 + b ** 2)
+
+    tls_rows.append({
+        "gcp_id": gcp_id,
+        "slope": b,
+        "intercept": a,
+        "slope_ols": df_lin.loc[df_lin["gcp_id"] == gcp_id, "slope"].iloc[0],
+        "pick_sigma_px": np.sqrt((d ** 2).sum() / (len(d) - 2)),
+    })
+
+df_tls = pd.DataFrame(tls_rows)
+
+# one pick error for all manual picks (GCPs and stake), pooled over the four fits
+pick_sigma = np.sqrt((df_tls["pick_sigma_px"] ** 2).mean())
+print(f"Pick error (pooled over GCP1-4): {pick_sigma:.2f} px")
+df_tls
+
+# %%
+# ==================================================
+# PARAMETRIC BOOTSTRAP -> ENVELOPE OF THE MODELLED GCP POSITIONS
+# ==================================================
+
+# all stake frames (as in the modelling above)
+stake_rows = []
+
+for stake_file in sorted(mod_in.glob("*_stake_point_*.csv")):
+
+    m = re.search(r"(\d{8})_(\d{6})", stake_file.name)
+    stake_df = pd.read_csv(stake_file, header=None)
+
+    stake_rows.append({
+        "timestamp": pd.to_datetime(m.group(1) + m.group(2), format="%Y%m%d%H%M%S"),
+        "file": stake_file.name.replace("_stake_point_", "_gcps_img_"),
+        "y5": float(stake_df.iloc[0, 1]),
+    })
+
+df_s = pd.DataFrame(stake_rows).sort_values("timestamp").reset_index(drop=True)
+y5 = df_s["y5"].values
+pct = sorted({2.5, 16, 50, 84, 97.5, *env_pct})
+env_rows = []
+
+for i, r in df_tls.iterrows():
+
+    gcp_id, b, a = int(r["gcp_id"]), r["slope"], r["intercept"]
+    y = df_5gcp[f"{gcp_id}_y"].values.astype(float)
+
+    # picks without error: orthogonal projection of the picks onto the fitted line
+    t = (x5 + b * (y - a)) / (1 + b ** 2)
+
+    slopes = np.empty(n_draws)
+    sims = np.empty((n_draws, len(y5)))
+
+    for k in range(n_draws):
+
+        bk, ak = tls_fit(
+            t + rng.normal(0, pick_sigma, len(t)),
+            a + b * t + rng.normal(0, pick_sigma, len(t))
+        )
+        slopes[k] = bk
+
+        # the stake pick of every modelled frame carries the same pick error
+        sims[k] = ak + bk * (y5 + rng.normal(0, pick_sigma, len(y5)))
+
+    for p, v in zip(pct, np.percentile(slopes, pct)):
+        df_tls.loc[i, f"slope_p{p:g}"] = v
+
+    q_y = np.percentile(sims, pct, axis=0)
+    q_d = np.percentile(sims - sims[:, [0]], pct, axis=0)    # movement since the first frame
+
+    for j, s in df_s.iterrows():
+        env_rows.append({
+            "timestamp": s["timestamp"],
+            "file": s["file"],
+            "gcp_id": gcp_id,
+            "y5": s["y5"],
+            "y_central": a + b * s["y5"],
+            **{f"y_p{p:g}": q_y[n, j] for n, p in enumerate(pct)},
+            **{f"dy_p{p:g}": q_d[n, j] for n, p in enumerate(pct)},
+        })
+
+df_env = pd.DataFrame(env_rows)
+df_tls.to_csv(mod_in / "df_tls.csv", index=False)
+df_env.to_csv(model_dir / "gcp_model_envelope.csv", index=False)
+
+# ==================================================
+# WRITE THE THREE SETS (same format as _modelling/output)
+# ==================================================
+lo, hi = env_pct
+
+for name, col in [("central", "y_central"), ("low", f"y_p{lo:g}"), ("high", f"y_p{hi:g}")]:
+
+    out_dir = model_dir / f"output_{name}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for fname, g in df_env.groupby("file"):
+
+        g = g.sort_values("gcp_id")
+        rows = [[int(round(fixed_x[gid])), int(round(v))] for gid, v in zip(g["gcp_id"], g[col])]
+        pd.DataFrame(rows).to_csv(out_dir / fname, header=False, index=False)
+
+    print(f"Written: {out_dir} ({df_env['file'].nunique()} files)")
+
+df_tls.round(3)
+
+# %%
+# ==================================================
+# PLOT: central model and envelope per GCP
+# ==================================================
+fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharex=True)
+
+for ax, (gcp_id, g) in zip(axes.flatten(), df_env.groupby("gcp_id")):
+
+    r = df_tls.set_index("gcp_id").loc[gcp_id]
+    ols = df_lin.set_index("gcp_id").loc[gcp_id]
+
+    ax.fill_between(g["timestamp"], g["y_p2.5"], g["y_p97.5"],
+                    color="tab:purple", alpha=0.12, lw=0, label="95 %")
+    ax.fill_between(g["timestamp"], g[f"y_p{lo:g}"], g[f"y_p{hi:g}"],
+                    color="tab:purple", alpha=0.3, lw=0, label=f"low / high ({lo:g}-{hi:g} %)")
+    ax.plot(g["timestamp"], g["y_central"], color="tab:purple", lw=1.5, label="central")
+    ax.plot(g["timestamp"], ols["intercept"] + ols["slope"] * g["y5"],
+            color="tab:blue", lw=1, label=f"current output (OLS), slope {ols['slope']:.2f}")
+    ax.plot(df_5gcp["timestamp"], df_5gcp[f"{gcp_id}_y"], linestyle="None", marker="o", markersize=6,
+            markerfacecolor="none", markeredgecolor="red", label="manual picks")
+
+    ax.set_title(f"GCP{gcp_id}: slope {r['slope']:.2f} "
+                 f"({r[f'slope_p{lo:g}']:.2f}-{r[f'slope_p{hi:g}']:.2f}), OLS {ols['slope']:.2f}")
+    ax.set_ylabel(f"GCP{gcp_id} image y (px), larger = surface lower")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+    ax.grid(True)
+    ax.legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
 # ## Spatio-temporal scatters of modelled data
 
 # %%
