@@ -459,6 +459,188 @@ if np.sum(mask) > 1:
 plt.show()
 
 # %% [markdown]
+# ## Surface lowering in metres
+#
+# Image positions are converted to surface lowering since installation with the
+# emergence calibration from a03ac (installation image: pole top + known emergence
+# at a reference point, P5 or GCP1-4 -> pixels per metre along that point's column):
+# lowering = (y - y_base at installation) / px_per_m.
+# For a GCP reference, y is the modelled GCP position of each stake frame
+# (_modelling/output); the manual picks are shown for comparison.
+# The scale is assumed constant along the column (perspective changes of the scale
+# below the installation surface are neglected).
+
+# %%
+# ==================================================
+# LOAD EMERGENCE CALIBRATION (a03ac) AND CONVERT TO METRES
+# ==================================================
+
+emergence_file = cam_dir / f"{cam}_emergence_calibration.csv"
+
+if not emergence_file.exists():
+
+    print(
+        f"No emergence calibration yet: {emergence_file}\n"
+        "-> set it in a03ac_orthorectify_pt5.py (Pole Top panel, Save Emergence)"
+    )
+
+else:
+
+    calib = pd.read_csv(
+        emergence_file,
+        dtype={"point": str, "date": str, "time": str}
+    ).iloc[0]
+
+    ref = calib["point"]
+    px_per_m = float(calib["px_per_m"])
+    y_install = float(calib["y_base"])
+    install_day = pd.to_datetime(calib["date"], format="%Y%m%d")
+
+    if ref == "P5":
+
+        df_m["ref_y"] = df_m["5_y"]
+        manual_ref = None
+
+    else:
+
+        gcp_i = int(ref[-1])
+
+        def gcp_y(folder):
+            # image y of the reference GCP per frame timestamp
+            rec = {}
+            for f in folder.glob(f"{cam}_gcps_img_*.csv"):
+                p = f.stem.split("_")
+                t = pd.to_datetime(f"{p[-2]}{p[-1]}", format="%Y%m%d%H%M%S")
+                rec[t] = pd.read_csv(f, header=None).iat[gcp_i - 1, 1]
+            return pd.Series(rec, dtype=float).sort_index()
+
+        # modelled GCP position for every stake frame, manual picks for comparison
+        df_m["ref_y"] = df_m["timestamp"].map(gcp_y(cam_dir / "_modelling" / "output"))
+        manual_ref = gcp_y(cam_dir)
+
+    # surface lowering since installation (positive = surface lower)
+    df_m["lowering_m"] = (df_m["ref_y"] - y_install) / px_per_m
+
+    # PDH accumulated since the installation day (same end-of-day convention as cum_PDH)
+    cum_PDH_install = df_kanu_daily.set_index("datetime")["cum_PDH"].asof(install_day)
+    df_m["PDH_since_install"] = df_m["cum_PDH"] - cum_PDH_install
+
+    print(
+        f"Calibration at {ref} ({calib['date']}_{calib['time']}): {calib['pole_px']} px = "
+        f"{calib['emergence_m']} m -> {px_per_m:.1f} px/m ({100 / px_per_m:.2f} cm/px)"
+    )
+
+    print(df_m[["timestamp", "ref_y", "lowering_m", "PDH_since_install"]])
+
+# %%
+# ==================================================
+# TIME SERIES: surface lowering at the reference point
+# ==================================================
+
+if "lowering_m" in df_m:
+
+    plt.figure(figsize=(8, 4))
+
+    plt.plot(
+        df_m["timestamp"],
+        df_m["lowering_m"],
+        marker="o",
+        markersize=3,
+        linestyle="-",
+        color="blue",
+        label=f"{ref}" + (" (modelled)" if manual_ref is not None else "")
+    )
+
+    if manual_ref is not None:
+
+        plt.plot(
+            manual_ref.index,
+            (manual_ref.values - y_install) / px_per_m,
+            linestyle="None",
+            marker="o",
+            markersize=6,
+            markerfacecolor="none",
+            markeredgecolor="red",
+            label=f"{ref} (manual picks)"
+        )
+
+    plt.xlabel("Date")
+    plt.ylabel(f"Surface lowering at {ref} since installation (m)")
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+    plt.grid(True)
+    plt.legend()
+
+    plt.show()
+
+# %%
+# ==================================================
+# SCATTER: surface lowering vs PDH since installation
+# ==================================================
+# slope = surface lowering per degree-hour; x 24 -> per degree-day
+
+if "lowering_m" in df_m:
+
+    x_var = "PDH_since_install"
+    y_var = "lowering_m"
+
+    x = df_m[x_var]
+    y = df_m[y_var]
+
+    plt.figure(figsize=(6,5))
+
+    # colour points by date
+    sc = plt.scatter(x, y, c=mdates.date2num(df_m["datetime"]), cmap="viridis")
+
+    plt.colorbar(
+        sc,
+        label="Date",
+        ticks=mdates.AutoDateLocator(),
+        format=mdates.DateFormatter("%Y-%m-%d")
+    )
+
+    plt.xlabel("PDH since installation (°C)")
+    plt.ylabel(f"Surface lowering at {ref} since installation (m)")
+
+    mask = np.isfinite(x) & np.isfinite(y)
+
+    if np.sum(mask) > 1:
+
+        result = linregress(
+            x[mask],
+            y[mask]
+        )
+
+        b = result.slope
+        c = result.intercept
+        r = result.rvalue
+        p = result.pvalue
+        p_txt = "p < 0.01" if p < 0.01 else f"p = {p:.3f}"
+
+        x_fit = np.linspace(
+            np.min(x[mask]),
+            np.max(x[mask]),
+            100
+        )
+
+        y_fit = b * x_fit + c
+
+        plt.plot(
+            x_fit,
+            y_fit,
+            color="red",
+            linewidth=2,
+            label=(
+                f"y = {b:.6f}x + {c:.3f}\n"
+                f"r = {r:.3f}, {p_txt}, n = {np.sum(mask)}\n"
+                f"{1000 * 24 * b:.1f} mm surface lowering per °C·d"
+            )
+        )
+
+        plt.legend()
+
+    plt.show()
+
+# %% [markdown]
 # # 3. Modell GCP img coordinates
 
 # %%
