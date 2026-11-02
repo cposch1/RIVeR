@@ -42,7 +42,9 @@ import logging as _logging
 _verbose = ("--verbose" in _sys.argv) or (_os.environ.get("ORTHO_GUI_VERBOSE") == "1")
 _logging.basicConfig(level=_logging.INFO if _verbose else _logging.WARNING)
 _logging.getLogger("river.config").setLevel(_logging.INFO if _verbose else _logging.WARNING)
+# --------------------------------------------------------------------------
 
+# ✅ Bring in your RIVeR config & functions (unchanged behavior)
 from river.config import *  # noqa: F401,F403
 
 import argparse
@@ -61,7 +63,7 @@ matplotlib.use("TkAgg")  # embed in Tkinter
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Rectangle
 
 import tkinter as tk
@@ -221,10 +223,6 @@ class OrthoApp:
         self.current_frame_path: Optional[Path] = None
         self._transformation = None
 
-        self.base_points: Optional[List[Tuple[int, int]]] = None
-        self.point_offsets = [0, 0, 0, 0]
-        self.sliders = []
-
         # Build UI
         self._build_ui()
         self._populate_cameras()
@@ -286,46 +284,12 @@ class OrthoApp:
         self.status = tk.StringVar(value="Select Camera, Date, Time; then Load Frame.")
         ttk.Label(self.master, textvariable=self.status).pack(side=tk.TOP, anchor="w", padx=8)
 
-        # ---- Individual Y sliders ----
-        slider_frame = ttk.LabelFrame(self.master, text="Adjust GCPs (Vertical)")
-        slider_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
-        
-        self.sliders = []
-        
-        for i in range(4):
-            row = ttk.Frame(slider_frame)
-            row.pack(fill=tk.X, padx=4, pady=2)
-        
-            ttk.Label(row, text=f"Point {i+1} Y").pack(side=tk.LEFT)
-        
-            s = tk.Scale(
-                row,
-                from_=-200,
-                to=200,
-                orient=tk.HORIZONTAL,
-                length=250,
-                resolution=1,
-                command=lambda val, idx=i: self._on_slider_move(idx, val),
-                state=tk.DISABLED
-            )
-            s.pack(side=tk.LEFT, padx=10)
-        
-            self.sliders.append(s)
-
         # Matplotlib Figure embedded in Tk
         self.fig: Figure = Figure(figsize=(9, 6), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.ax.axis("off")
-        
-        # Canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.master)
-        self.canvas_widget = self.canvas.get_tk_widget()
-        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
-        
-        # toolbar
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.master)
-        self.toolbar.update()
-        self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # ---- Population & coloring ----
 
@@ -413,14 +377,6 @@ class OrthoApp:
         self.points = []
         self.btn_save_transform["state"] = tk.DISABLED
         self._disable_clicks()
-
-        self.base_points = None
-        self.point_offsets = [0, 0, 0, 0]
-        
-        for s in getattr(self, "sliders", []):
-            s.set(0)
-            s["state"] = tk.DISABLED
-        
         if due_to_selection_change:
             # Clear the displayed image to force reloading the correct one for new selection
             self.current_img = None
@@ -441,29 +397,31 @@ class OrthoApp:
         if not sel:
             self.selected_camera = None
             return
-            
         self.selected_camera = self.lb_camera.get(sel[0])
 
-        p = global_extent_path(self.selected_camera)
         
+        # Load limits into global extent or load persisted global extent for this camera (if any)
         if self.custom_xlim is not None and self.custom_ylim is not None:
-            # ✅ Deterministic manual extent
+            # ✅ User-defined mode (deterministic)
             self.global_extent = (
                 self.custom_xlim[0],
                 self.custom_xlim[1],
                 self.custom_ylim[0],
                 self.custom_ylim[1]
             )
-        
-        elif p.exists():
-            try:
-                with p.open("r") as f:
-                    self.global_extent = tuple(json.load(f))
-            except Exception:
-                self.global_extent = None
         else:
+            # ✅ Fallback: load or compute global extent
             self.global_extent = None
+            p = global_extent_path(self.selected_camera)
+        
+            if p.exists():
+                try:
+                    with p.open("r") as f:
+                        self.global_extent = tuple(json.load(f))
+                except Exception:
+                    self.global_extent = None
 
+                
         self._populate_dates()
         self._clear_points_state(due_to_selection_change=True)
 
@@ -483,83 +441,6 @@ class OrthoApp:
             return
         self.selected_time = self.lb_time.get(sel[0])
         self._clear_points_state(due_to_selection_change=True)
-
-
-    # ---- Previous GCP handling ----
-    def _try_load_previous_gcps(self):
-        cam = self.selected_camera
-    
-        gcps_cam_dir = gcps_dir / cam
-        if not gcps_cam_dir.exists():
-            return
-    
-        files = sorted(gcps_cam_dir.glob(f"{cam}_gcps_img_*.csv"))
-        if not files:
-            return
-    
-        latest_file = files[-1]
-    
-        try:
-            pts = []
-            with latest_file.open("r") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    pts.append((int(float(row[0])), int(float(row[1]))))
-    
-            if len(pts) == 4:
-                self.base_points = pts
-                self.point_offsets = [0, 0, 0, 0]
-    
-                for s in self.sliders:
-                    s.set(0)
-                    s["state"] = tk.NORMAL
-    
-                self._apply_offsets_and_draw()
-    
-                self._disable_clicks()
-                self.status.set("Loaded previous GCPs. Adjust each point with sliders.")
-    
-        except Exception as e:
-            print(f"[WARN] Failed to load previous GCPs: {e}")
-
-    def _on_slider_move(self, idx, val):
-        if self.base_points is None:
-            return
-    
-        self.point_offsets[idx] = int(float(val))
-        self._apply_offsets_and_draw()
-
-    def _apply_offsets_and_draw(self):
-        if self.base_points is None or self.current_img is None:
-            return
-        
-        # Save current zoom/pan state
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-    
-        self.points = [
-            (x, y + self.point_offsets[i])
-            for i, (x, y) in enumerate(self.base_points)
-        ]
-    
-        self._draw_image()
-        
-        #Restore zoom/pan
-        self.ax.set_xlim(xlim)
-        self.ax.set_ylim(ylim)
-
-    
-        for i, (x, y) in enumerate(self.points, start=1):
-            color = '#ED6B57' if i == 1 else '#6CD4FF'
-            self.ax.plot(x, y, 'o', color=color, markersize=3)
-            self.ax.text(x, y, str(i), color=color, fontsize=8,
-                         ha='left', va='bottom')
-    
-        self.canvas.draw_idle()
-    
-        self._disable_clicks()
-        self.btn_save_transform["state"] = tk.NORMAL
-
 
     # ---- Core actions ----
 
@@ -586,11 +467,9 @@ class OrthoApp:
         self._draw_image()
         self._enable_clicks()
         self.points = []
-        self._try_load_previous_gcps()
         self.status.set(f"Loaded: {self.selected_camera} {self.selected_date} {self.selected_time}. Click 4 points in order.")
         self.btn_reset["state"] = tk.NORMAL
         self.btn_save_transform["state"] = tk.DISABLED  # enable after 4 points
-        self.toolbar.zoom()
 
     def _draw_image(self):
         self.ax.clear()
@@ -619,16 +498,8 @@ class OrthoApp:
         if self.current_img is None:
             return
         self._clear_points_state(due_to_selection_change=False)
-        self.base_points = None
-        self.point_offsets = [0, 0, 0, 0]
-        
-        for s in self.sliders:
-            s.set(0)
-            s["state"] = tk.DISABLED
 
     def _on_click(self, event):
-        if hasattr(self, "toolbar") and self.toolbar.mode != "":
-            return
         if self.current_img is None:
             return
         if event.xdata is None or event.ydata is None:
@@ -665,41 +536,6 @@ class OrthoApp:
         cam = self.selected_camera
         date = self.selected_date
         time_ = self.selected_time
-
-        
-        # Check if transformation already exists
-        transf_file = transform_json_path(cam, date, time_)
-        
-        if transf_file.exists():
-            choice = messagebox.askyesno(
-                "Overwrite?",
-                f"Transformation already exists for:\n"
-                f"{cam} {date} {time_}\n\n"
-                f"Do you want to overwrite it?"
-            )
-            if not choice:
-                print("[Info] Operation cancelled by user (no overwrite).")
-                return
-            else:
-                # ✅ HARD overwrite: remove all existing outputs first
-        
-                try:
-                    # JSON
-                    transf_file.unlink(missing_ok=True)
-        
-                    # Orthorectified PNG (with overlays)
-                    ortho_dir = rect_dir / cam / "orthorectification_imgs"
-                    ortho_img = ortho_dir / f"{cam}_orthorect_{date}_{time_}.png"
-                    ortho_img.unlink(missing_ok=True)
-        
-                    # Clean ortho image
-                    ortho_clean_dir = rect_dir / cam / "ortho_imgs"
-                    ortho_clean = ortho_clean_dir / f"{cam}_orthoimg_{date}_{time_}.png"
-                    ortho_clean.unlink(missing_ok=True)
-        
-                except Exception as e:
-                    print(f"[WARN] Failed to clean previous outputs: {e}")
-
 
         # ---- Save GCP image coordinates
         try:
@@ -758,7 +594,7 @@ class OrthoApp:
         self._populate_dates()
         self._populate_cameras()
 
-        # Auto-reset points after Save & Transform to avoid mismatches
+        # ✅ Auto-reset points after Save & Transform to avoid mismatches
         self._clear_points_state(due_to_selection_change=False)
         self.status.set("Saved & transformed successfully. Points reset.")
 
@@ -789,7 +625,7 @@ class OrthoApp:
         ax1.axis('off')
         ax1.set_title('Original Image')
 
-        # Draw lines in original
+        # Draw lines in original (✅ removed accidental extra blue line)
         ax1.plot([x1_pix, x2_pix], [y1_pix, y2_pix], color='#6CD4FF', linewidth=2)
         ax1.plot([x2_pix, x3_pix], [y2_pix, y3_pix], color='#62C655', linewidth=2)
         ax1.plot([x3_pix, x4_pix], [y3_pix, y4_pix], color='#ED6B57', linewidth=2)
@@ -808,30 +644,15 @@ class OrthoApp:
         
         if 'transformed_img' in transformation and 'extent' in transformation:
 
-            p = global_extent_path(cam)
-
-            # Make sure directory always exists BEFORE any write attempt
-            p.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Case 1: manual extent (from CLI)
-            if self.custom_xlim is not None and self.custom_ylim is not None:
-                self.global_extent = (
-                    self.custom_xlim[0],
-                    self.custom_xlim[1],
-                    self.custom_ylim[0],
-                    self.custom_ylim[1]
-                )
-            
-            # Case 2: compute from first transformation
-            elif self.global_extent is None:
+            # ----- capture global extent on first run -----
+            if self.global_extent is None:
                 self.global_extent = tuple(transformation['extent'])
-            
-            # Save ONCE (prevents overwriting)
-            if not p.exists():
+                p = global_extent_path(cam)
+                p.parent.mkdir(parents=True, exist_ok=True)
                 with p.open("w") as f:
                     json.dump(self.global_extent, f, indent=2)
-                print(f"[Saved] Global extent: {p}")
-            
+        
+            # ----- define display extent (ALWAYS defined) -----
             display_extent = self.global_extent
         
             # ----- draw raster in its TRUE world position -----
@@ -887,7 +708,7 @@ class OrthoApp:
             x3_rw, y3_rw = rw_points[2]
             x4_rw, y4_rw = rw_points[3]
 
-            # Lines
+            # Lines (✅ 2–4 diagonal fixed with correct coords and color)
             ax2.plot([x1_rw, x2_rw], [y1_rw, y2_rw], color='#6CD4FF', linewidth=2)
             ax2.plot([x2_rw, x3_rw], [y2_rw, y3_rw], color='#62C655', linewidth=2)
             ax2.plot([x3_rw, x4_rw], [y3_rw, y4_rw], color='#ED6B57', linewidth=2)
@@ -914,16 +735,12 @@ class OrthoApp:
         ortho_dir.mkdir(parents=True, exist_ok=True)
         
         ortho_img = ortho_dir / f"{cam}_orthorect_{date}_{time_}.png"
-        fig.savefig(str(ortho_img),
-                    dpi=300,
-                    bbox_inches="tight",
-                    pad_inches=0,
-                    transparent=True)
+        fig.savefig(str(ortho_img))
 
         print(f"[Saved] Orthorectified PNG: {ortho_img}")
 
         # Show the figure (as requested)
-        plt.show(block=False)
+        plt.show()
 
         # ---- Save orthorectified image only (no overlays) ----
         fig_clean, ax_clean = plt.subplots(figsize=(6, 4))
@@ -953,11 +770,7 @@ class OrthoApp:
         
         ortho_clean = ortho_clean_dir / f"{cam}_orthoimg_{date}_{time_}.png"
 
-        fig_clean.savefig(str(ortho_clean),
-                    dpi=300,
-                    bbox_inches="tight",
-                    pad_inches=0,
-                    transparent=True)
+        fig_clean.savefig(str(ortho_clean), bbox_inches="tight", pad_inches=0)
     
         plt.close(fig_clean)  # prevent extra window
     
@@ -1020,7 +833,16 @@ def main(argv: List[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    frames_root = frames_dir
+    # Prefer env var; fallback to frames_dir imported from river.config
+    if "FRAMES_DIR" in os.environ:
+        frames_root = Path(os.environ["FRAMES_DIR"]).expanduser()
+    else:
+        try:
+            frames_root = Path(frames_dir)
+        except NameError:
+            tk.Tk().withdraw()
+            messagebox.showerror("Config", "FRAMES_DIR not set and frames_dir not available from river.config.")
+            return 2
 
     if args.refresh_index:
         df_frames = build_and_save_frames_index(frames_root)

@@ -11,7 +11,7 @@ Inputs:
 - FRAMES_DIR/_frame_paths.parquet
 - GCP image coordinates: gcps/<cam>/_modelling/output (--gcps modelled,
   default) or gcps/<cam> (--gcps manual); same timestamp, else that date's
-  first file (as in a03b --dyn)
+  first file (as in a06 --dyn)
 
 Coordinates:
 - local GCP system (default) or EPSG:32623 with --abs-coords.
@@ -96,7 +96,7 @@ parser.add_argument(
     help="GCP image coordinates to use: modelled (b02 output in "
          "gcps/<camera>/_modelling/output, default) or manual picks "
          "(gcps/<camera>). Per scene: same timestamp, else the first file "
-         "of that date (as in a03b_orthorectify_auto.py --dyn)"
+         "of that date (as in a06_orthorectify_auto.py --dyn)"
 )
 
 args = parser.parse_args()
@@ -213,7 +213,7 @@ def gcp_folder(cam):
 
 def find_gcp_file(cam, date, time_):
     """
-    GCP image coordinate CSV for a scene, same rule as a03b --dyn: the file
+    GCP image coordinate CSV for a scene, same rule as a06 --dyn: the file
     with the same timestamp, else the first file of that date. None if the
     date has no file.
     """
@@ -522,7 +522,7 @@ class CrossSectionApp:
     def _view_limits(self, cam):
         """Display limits: --xlim/--ylim if given, else the mode's default."""
         if SPACE == "abs":
-            # like a03b: GCP extent +- buffer, in EPSG:32623
+            # like a06: GCP extent +- buffer, in EPSG:32623
             real = load_gcps_real(cam)
             xs = [c[0] for c in real.values()]
             ys = [c[1] for c in real.values()]
@@ -560,7 +560,7 @@ class CrossSectionApp:
                 "Model GCPs for this date in b02, "
                 "or start with --gcps manual."
                 if args.gcps == "modelled" else
-                "Pick GCPs for this date with a03aa, "
+                "Pick GCPs for this date with a03, "
                 "or start with --gcps modelled."
             )
             messagebox.showerror(

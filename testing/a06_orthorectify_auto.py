@@ -336,7 +336,7 @@ def main():
     else:
         gcp_src_dir = gcps_dir / cam
 
-    # Real-world GCP distances: a03aa only writes them in full mode (not with
+    # Real-world GCP distances: a03 only writes them in full mode (not with
     # --coords-only), so derive them from the real coordinates if missing
     dist_file = gcps_dir / cam / f"{cam}_gcps_dist.csv"
     if not dist_file.exists():
@@ -531,7 +531,7 @@ def main():
         try:
     
             # ---------- GCP handling ----------
-            # pick the GCP file for this scene (a04 uses the same rule)
+            # pick the GCP file for this scene (a07 uses the same rule)
             if args.dyn:
 
                 # Skip dates with no available GCP file
