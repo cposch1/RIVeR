@@ -12,6 +12,9 @@ Inputs:
 - GCP image coordinates: gcps/<cam>/_modelling/output (--gcps modelled,
   default) or gcps/<cam> (--gcps manual); same timestamp, else that date's
   first file (as in a06 --dyn)
+- --gcp-set central|low|high (with --gcps modelled): GCPs from the b02
+  uncertainty set gcps/<cam>/_modelling/output_<set>; cross-sections are then
+  saved to bathy_dir/<cam>/gcpset_<set>/ (main picks stay untouched)
 
 Coordinates:
 - local GCP system (default) or EPSG:32623 with --abs-coords.
@@ -98,8 +101,19 @@ parser.add_argument(
          "(gcps/<camera>). Per scene: same timestamp, else the first file "
          "of that date (as in a06_orthorectify_auto.py --dyn)"
 )
+parser.add_argument(
+    "--gcp-set",
+    choices=["central", "low", "high"],
+    default=None,
+    help="With --gcps modelled: use the b02 uncertainty set "
+         "gcps/<camera>/_modelling/output_<set> instead of output; "
+         "cross-sections are saved to bathy_dir/<camera>/gcpset_<set>/"
+)
 
 args = parser.parse_args()
+
+if args.gcp_set and args.gcps != "modelled":
+    parser.error("--gcp-set needs --gcps modelled")
 
 # ------------------------------------------------------------
 # Logging
@@ -116,12 +130,19 @@ from river.config import *
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
+def xs_dir(cam):
+    # cross-sections of a b02 uncertainty set are kept apart from the main picks
+    if args.gcp_set:
+        return bathy_dir / cam / f"gcpset_{args.gcp_set}"
+    return bathy_dir / cam
+
+
 def xs_coord_path(cam, date, time_):
-    return bathy_dir / cam / f"{cam}_xs_coord_{date}_{time_}.csv"
+    return xs_dir(cam) / f"{cam}_xs_coord_{date}_{time_}.csv"
 
 
 def xs_img_path(cam, date, time_, view="ortho"):
-    out_dir_img = bathy_dir / cam / "xs_imgs" / view
+    out_dir_img = xs_dir(cam) / "xs_imgs" / view
     out_dir_img.mkdir(parents=True, exist_ok=True)
     return out_dir_img / f"{cam}_xs_{date}_{time_}.png"
 
@@ -207,7 +228,10 @@ def convert_points(pts, cam, to_space):
 def gcp_folder(cam):
     # --gcps modelled: b02 output; --gcps manual: hand-picked GCPs
     if args.gcps == "modelled":
-        return gcps_dir / cam / "_modelling" / "output"
+        return (
+            gcps_dir / cam / "_modelling"
+            / (f"output_{args.gcp_set}" if args.gcp_set else "output")
+        )
     return gcps_dir / cam
 
 
@@ -231,8 +255,7 @@ def gcps_available(cam, date, time_):
 
 
 def xs_exists(cam, date, time_):
-    p = bathy_dir / cam / f"{cam}_xs_coord_{date}_{time_}.csv"
-    return p.exists()
+    return xs_coord_path(cam, date, time_).exists()
 
     
 def find_reference_frame(row):
@@ -247,7 +270,7 @@ def find_previous_xs(cam, date, time_):
 
     xs_candidates = []
 
-    cam_dir = bathy_dir / cam
+    cam_dir = xs_dir(cam)
 
     if not cam_dir.exists():
         return None
@@ -902,8 +925,13 @@ def main():
     frames_root = frames_dir
     df_frames = pd.read_parquet(frames_root / "_frame_paths.parquet")
 
-    where = "gcps/<camera>/_modelling/output" if args.gcps == "modelled" else "gcps/<camera>"
+    if args.gcps == "modelled":
+        where = f"gcps/<camera>/_modelling/output{'_' + args.gcp_set if args.gcp_set else ''}"
+    else:
+        where = "gcps/<camera>"
     print(f"[INFO] GCPs: {args.gcps} ({where}); scenes without them are grey")
+    if args.gcp_set:
+        print(f"[INFO] GCP set {args.gcp_set}: cross-sections in bathy_dir/<camera>/gcpset_{args.gcp_set}/")
     print(f"[INFO] Coordinates: {SPACE_LABEL[SPACE]}")
 
     root = tk.Tk()

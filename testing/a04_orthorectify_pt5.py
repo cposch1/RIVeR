@@ -133,6 +133,73 @@ def stake_png_path(
     )
 
 
+def emergence_path(
+    cam: str
+):
+    # one emergence calibration per camera (installation image), with the
+    # reference point it was made at (P5 or GCP1-4)
+    return (
+        gcps_dir
+        / cam
+        / f"{cam}_emergence_calibration.csv"
+    )
+
+
+def emergence_png_path(
+    cam: str,
+    point: str,
+    date: str,
+    time_: str
+):
+    return (
+        gcps_dir
+        / cam
+        / "stake_point_imgs"
+        / f"{cam}_emergence_{point}_{date}_{time_}.png"
+    )
+
+
+def gcp_img_point(
+    cam: str,
+    date: str,
+    time_: str,
+    gcp: int
+):
+    # image position of GCP <gcp> (1-4): manual pick of this frame, else the
+    # modelled one, else the nearest frame in time (manual or modelled)
+    folders = [
+        gcps_dir / cam,
+        gcps_dir / cam / "_modelling" / "output",
+    ]
+
+    def read(f):
+        row = pd.read_csv(f, header=None).values[gcp - 1]
+        return (int(round(row[0])), int(round(row[1])))
+
+    for folder in folders:
+        f = folder / f"{cam}_gcps_img_{date}_{time_}.csv"
+        if f.exists():
+            return read(f), f
+
+    target = pd.to_datetime(f"{date}{time_}", format="%Y%m%d%H%M%S")
+    best = None
+
+    for folder in folders:
+        for f in folder.glob(f"{cam}_gcps_img_*.csv"):
+            try:
+                p = f.stem.split("_")
+                dt = pd.to_datetime(f"{p[-2]}{p[-1]}", format="%Y%m%d%H%M%S")
+            except Exception:
+                continue
+            if best is None or abs(dt - target) < best[0]:
+                best = (abs(dt - target), f)
+
+    if best is None:
+        return None, None
+
+    return read(best[1]), best[1]
+
+
 
 # ============================================================
 # GUI
@@ -162,6 +229,11 @@ class StakePointApp:
         self.base_point = None
         self.point = None
         self.offset = 0
+
+        # emergence calibration: reference point (P5 or GCP1-4) and its top,
+        # top_px = pixels above the reference point
+        self.ref_point = None
+        self.top_px = 0
 
         self._mpl_cid = None
 
@@ -278,6 +350,100 @@ class StakePointApp:
         )
 
         self.offset_slider.pack()
+
+        # Pole top (emergence calibration on the installation image)
+
+        top_frame = ttk.LabelFrame(
+            top,
+            text="Pole Top (installation: emergence calibration)"
+        )
+
+        top_frame.pack(
+            side=tk.LEFT,
+            padx=10
+        )
+
+        ref_row = ttk.Frame(top_frame)
+
+        ref_row.pack(
+            fill=tk.X,
+            pady=(0, 4)
+        )
+
+        ttk.Label(
+            ref_row,
+            text="Reference point"
+        ).pack(side=tk.LEFT)
+
+        self.ref_var = tk.StringVar(value="P5")
+
+        self.cb_ref = ttk.Combobox(
+            ref_row,
+            textvariable=self.ref_var,
+            values=["P5", "GCP1", "GCP2", "GCP3", "GCP4"],
+            state="readonly",
+            width=6
+        )
+
+        self.cb_ref.pack(
+            side=tk.LEFT,
+            padx=5
+        )
+
+        self.cb_ref.bind(
+            "<<ComboboxSelected>>",
+            self._on_ref_selected
+        )
+
+        self.top_slider = tk.Scale(
+            top_frame,
+            from_=0,
+            to=600,
+            orient=tk.HORIZONTAL,
+            length=250,
+            label="Top height above reference point (px)",
+            command=self._on_top_slider_move,
+            state=tk.DISABLED
+        )
+
+        self.top_slider.pack()
+
+        emergence_row = ttk.Frame(top_frame)
+
+        emergence_row.pack(
+            fill=tk.X,
+            pady=(4, 0)
+        )
+
+        ttk.Label(
+            emergence_row,
+            text="Emergence (m)"
+        ).pack(side=tk.LEFT)
+
+        self.emergence_var = tk.StringVar()
+
+        self.emergence_var.trace_add(
+            "write",
+            lambda *args: self._update_calibration_status()
+        )
+
+        ttk.Entry(
+            emergence_row,
+            textvariable=self.emergence_var,
+            width=8
+        ).pack(
+            side=tk.LEFT,
+            padx=5
+        )
+
+        ttk.Button(
+            emergence_row,
+            text="Save Emergence",
+            command=self.save_emergence
+        ).pack(
+            side=tk.LEFT,
+            padx=5
+        )
 
         # Buttons
 
@@ -579,10 +745,13 @@ class StakePointApp:
 
         self.display_img = self.current_img.copy()
 
+        self.top_px = 0
+
         self._draw_image()
         self._enable_clicks()
 
         self._load_previous_point()
+        self._load_ref_point()
 
     # ----------------------------------------------------
 
@@ -607,6 +776,7 @@ class StakePointApp:
         )
 
         candidates = []
+        later = []
 
         for f in files:
 
@@ -623,17 +793,28 @@ class StakePointApp:
                     candidates.append(
                         (dt, f)
                     )
+                elif dt > current_dt:
+                    later.append(
+                        (dt, f)
+                    )
 
             except:
                 pass
 
-        if not candidates:
+        if candidates:
+            latest = max(
+                candidates,
+                key=lambda x: x[0]
+            )[1]
+        elif later:
+            # frame before the first pick (e.g. installation image):
+            # start from the earliest pick so x stays on the same column
+            latest = min(
+                later,
+                key=lambda x: x[0]
+            )[1]
+        else:
             return
-
-        latest = max(
-            candidates,
-            key=lambda x: x[0]
-        )[1]
 
         with latest.open() as f:
             row = next(csv.reader(f))
@@ -644,9 +825,13 @@ class StakePointApp:
         )
 
         self.point = self.base_point
+        self.top_px = 0
 
         self.offset_slider.set(0)
         self.offset_slider["state"] = tk.NORMAL
+
+        self.top_slider["state"] = tk.NORMAL
+        self.top_slider.set(0)
 
         self._draw_image()
 
@@ -661,18 +846,117 @@ class StakePointApp:
         ylim = self.ax.get_ylim()
     
         x, y = self.base_point
-    
+
         self.point = (
             x,
             y + int(float(value))
         )
-    
+
         self._draw_image()
-    
+
         self.ax.set_xlim(xlim)
         self.ax.set_ylim(ylim)
-    
+
         self.canvas.draw_idle()
+
+        self._update_calibration_status()
+
+    # ----------------------------------------------------
+
+    def _ref_xy(self):
+
+        # reference point of the emergence calibration: the stake point (P5)
+        # or the image position of the selected GCP
+        if self.ref_var.get() == "P5":
+            return self.point
+
+        return self.ref_point
+
+    def _load_ref_point(self):
+
+        self.ref_point = None
+
+        ref = self.ref_var.get()
+
+        if ref != "P5" and self.current_img is not None:
+
+            xy, f = gcp_img_point(
+                self.selected_camera,
+                self.selected_date,
+                self.selected_time,
+                int(ref[-1])
+            )
+
+            if xy is None:
+                self.status.set(f"No GCP image coordinates found for {ref}")
+            else:
+                self.ref_point = xy
+                self.status.set(f"{ref} at {xy} from {f.parent.name}/{f.name}")
+
+        if self._ref_xy() is not None:
+            self.top_slider["state"] = tk.NORMAL
+
+    def _on_ref_selected(self, *args):
+
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+
+        self.top_px = 0
+        self.top_slider["state"] = tk.NORMAL
+        self.top_slider.set(0)
+
+        self._load_ref_point()
+
+        self._draw_image()
+
+        if self.current_img is not None:
+            self.ax.set_xlim(xlim)
+            self.ax.set_ylim(ylim)
+
+        self.canvas.draw_idle()
+
+    def _on_top_slider_move(self, value):
+
+        # pole top straight above the reference point (same x = same column)
+        if self._ref_xy() is None:
+            return
+
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+
+        self.top_px = int(float(value))
+
+        self._draw_image()
+
+        self.ax.set_xlim(xlim)
+        self.ax.set_ylim(ylim)
+
+        self.canvas.draw_idle()
+
+        self._update_calibration_status()
+
+    # ----------------------------------------------------
+
+    def _update_calibration_status(self):
+
+        if self._ref_xy() is None or self.top_px <= 0:
+            return
+
+        txt = f"Pole top {self.top_px} px above {self.ref_var.get()}"
+
+        try:
+            emergence = float(self.emergence_var.get().replace(",", "."))
+        except ValueError:
+            emergence = None
+
+        if emergence is not None and emergence > 0:
+            txt += (
+                f" | emergence {emergence:.3f} m -> "
+                f"{self.top_px / emergence:.1f} px/m "
+                f"({100 * emergence / self.top_px:.2f} cm/px)"
+            )
+
+        self.status.set(txt)
 
     # ----------------------------------------------------
 
@@ -709,15 +993,21 @@ class StakePointApp:
         )
     
         self.point = self.base_point
-    
+
         self.offset_slider["state"] = tk.NORMAL
         self.offset_slider.set(0)
-    
+
+        # a new stake point only resets the pole top if P5 is the reference
+        if self.ref_var.get() == "P5":
+            self.top_px = 0
+            self.top_slider["state"] = tk.NORMAL
+            self.top_slider.set(0)
+
         self._draw_image()
-    
+
         self.ax.set_xlim(xlim)
         self.ax.set_ylim(ylim)
-    
+
         self.canvas.draw_idle()
 
     # ----------------------------------------------------
@@ -750,6 +1040,62 @@ class StakePointApp:
                 y,
                 "P5",
                 color="red",
+                fontsize=6,
+                ha="left",
+                va="bottom"
+            )
+
+        # GCP used as reference for the emergence calibration
+        if self.ref_var.get() != "P5" and self.ref_point is not None:
+
+            x, y = self.ref_point
+
+            self.ax.plot(
+                x,
+                y,
+                "o",
+                color="magenta",
+                markersize=3
+            )
+
+            self.ax.text(
+                x,
+                y,
+                self.ref_var.get(),
+                color="magenta",
+                fontsize=6,
+                ha="left",
+                va="bottom"
+            )
+
+        # pole top (emergence calibration), straight above the reference point
+        ref = self._ref_xy()
+
+        if ref is not None and self.top_px > 0:
+
+            x, y = ref
+
+            self.ax.plot(
+                [x, x],
+                [y, y - self.top_px],
+                color="cyan",
+                linestyle="--",
+                linewidth=0.8
+            )
+
+            self.ax.plot(
+                x,
+                y - self.top_px,
+                "o",
+                color="cyan",
+                markersize=3
+            )
+
+            self.ax.text(
+                x,
+                y - self.top_px,
+                "TOP",
+                color="cyan",
                 fontsize=6,
                 ha="left",
                 va="bottom"
@@ -868,6 +1214,107 @@ class StakePointApp:
         self._populate_dates()
         self._populate_cameras()
 
+
+    # ----------------------------------------------------
+
+    def save_emergence(self):
+
+        # reference point (P5 or GCP) + its pole top on the installation image
+        # + known emergence -> pixels per metre along the reference-point column
+
+        ref_name = self.ref_var.get()
+        ref = self._ref_xy()
+
+        if ref is None or self.top_px <= 0:
+
+            messagebox.showwarning(
+                "Emergence",
+                f"Set the reference point ({ref_name}) and slide the pole top above it first."
+            )
+
+            return
+
+        try:
+            emergence = float(self.emergence_var.get().replace(",", "."))
+        except ValueError:
+            emergence = None
+
+        if emergence is None or emergence <= 0:
+
+            messagebox.showwarning(
+                "Emergence",
+                "Enter the emergence in metres (e.g. 1.25)."
+            )
+
+            return
+
+        cam = self.selected_camera
+        date = self.selected_date
+        time_ = self.selected_time
+
+        x, y_base = ref
+        y_top = y_base - self.top_px
+        px_per_m = self.top_px / emergence
+
+        csv_file = emergence_path(cam)
+
+        if csv_file.exists() and not messagebox.askyesno(
+            "Emergence",
+            f"{csv_file.name} exists. Overwrite?"
+        ):
+            return
+
+        csv_file.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        with csv_file.open(
+            "w",
+            newline=""
+        ) as f:
+
+            w = csv.writer(f)
+
+            w.writerow([
+                "point", "date", "time", "x", "y_base", "y_top",
+                "pole_px", "emergence_m", "px_per_m"
+            ])
+
+            w.writerow([
+                ref_name, date, time_, x, y_base, y_top,
+                self.top_px, emergence, round(px_per_m, 4)
+            ])
+
+        png_file = emergence_png_path(
+            cam,
+            ref_name,
+            date,
+            time_
+        )
+
+        png_file.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        self.fig.savefig(
+            png_file,
+            dpi=300
+        )
+
+        print(
+            f"[Saved] {csv_file}"
+        )
+
+        print(
+            f"[Saved] {png_file}"
+        )
+
+        self.status.set(
+            f"Saved emergence calibration at {ref_name}: {self.top_px} px = {emergence:.3f} m "
+            f"-> {px_per_m:.1f} px/m ({100 / px_per_m:.2f} cm/px)"
+        )
 
     # ----------------------------------------------------
 
