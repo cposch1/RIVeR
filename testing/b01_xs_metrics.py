@@ -14,7 +14,7 @@
 # ---
 
 # %%
-from river.config import bathy_dir, pts_dir
+from river.config import bathy_dir, pts_dir, aws_dir, fig_dir
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -112,6 +112,31 @@ def _whites_to_black(fig):
     return undo
 
 
+# Figure folders: a plain file name such as "scatter_depth_vs_pdh.svg" is
+# saved in FIG_ROOT/<theme>/ (first theme whose keyword is in the
+# name); a name that already contains a folder is saved as given.
+FIG_ROOT = fig_dir  # results/figures (FIG_DIR in setup.sh)
+FIG_THEMES = [
+    ("memory_hysteresis", ("memory", "best_tau", "trajectory_", "hysteresis_",
+                           "r_channel_width_vs_pdh_window", "forcing_corrected")),
+    ("depth_stage", ("stage", "depth")),
+    ("channel_width_vs_forcing", ("scatter_",)),
+    ("channel_width_timeseries", ("channel-width_", "timeseries_")),
+]
+
+
+def _fig_path(fname):
+    if not isinstance(fname, (str, Path)):
+        return fname
+    p = Path(fname)
+    if p.parent != Path("."):
+        return p
+    theme = next((t for t, keys in FIG_THEMES if any(k in p.name for k in keys)), "")
+    out = FIG_ROOT / theme / p.name
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 # keep the original plt.savefig once (re-running this cell is safe)
 if "_savefig_white" not in globals():
     _savefig_white = plt.savefig
@@ -119,6 +144,7 @@ if "_savefig_white" not in globals():
 
 def _savefig_with_black(fname, *args, black=None, **kwargs):
 
+    fname = _fig_path(fname)
     _savefig_white(fname, *args, **kwargs)
 
     if not (export_black if black is None else black):
@@ -380,7 +406,7 @@ plt.show()
 df_xs.to_csv("xs_lengths.csv", index=False)
 
 # %%
-from river.config import bathy_dir, pts_dir
+from river.config import bathy_dir, pts_dir, aws_dir, fig_dir
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -392,7 +418,7 @@ import numpy as np
 # ==================================================
 
 cam = "ilh-cam1-pt"
-kan_u = pd.read_csv('KAN_U_day_new.csv', index_col=0, parse_dates=True)
+kan_u = pd.read_csv(aws_dir / 'KAN_U_day_new.csv', index_col=0, parse_dates=True)
 
 # old XS data for now; switch back to bathy_dir once the new XS data is done
 xs_dir = bathy_dir# / "_old_data"
@@ -592,7 +618,7 @@ plt.savefig("channel-width_temp.svg")
 plt.show()
 
 # %%
-from river.config import pts_dir
+from river.config import pts_dir, aws_dir
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -625,7 +651,7 @@ df_pt_1h = df_pt_1h.loc[start_date:end_date]
 
 
 # --- KAN_U hourly data ---
-kan_u = pd.read_csv("KAN_U_hour_new.csv", index_col=0, parse_dates=True)
+kan_u = pd.read_csv(aws_dir / "KAN_U_hour_new.csv", index_col=0, parse_dates=True)
 kan_sel = kan_u.loc[start_date:end_date]
 
 
@@ -1084,7 +1110,7 @@ plt.show()
 # autocorrelated, so they are optimistic.
 
 # %%
-from river.config import bathy_dir, pts_dir
+from river.config import bathy_dir, pts_dir, aws_dir, fig_dir
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1100,7 +1126,7 @@ cam = "ilh-cam1-pt"
 # old XS data for now; switch back to bathy_dir once the new XS data is done
 xs_dir = bathy_dir# / "_old_data"
 
-temp_dat = "KAN_U_hour_new.csv"
+temp_dat = aws_dir / "KAN_U_hour_new.csv"
 
 pdh_start = pd.to_datetime("2025-07-14 00:00")
 pdh_end   = pd.to_datetime("2025-09-01 00:00")
@@ -1190,6 +1216,31 @@ def _whites_to_black(fig):
     return undo
 
 
+# Figure folders: a plain file name such as "scatter_depth_vs_pdh.svg" is
+# saved in FIG_ROOT/<theme>/ (first theme whose keyword is in the
+# name); a name that already contains a folder is saved as given.
+FIG_ROOT = fig_dir  # results/figures (FIG_DIR in setup.sh)
+FIG_THEMES = [
+    ("memory_hysteresis", ("memory", "best_tau", "trajectory_", "hysteresis_",
+                           "r_channel_width_vs_pdh_window", "forcing_corrected")),
+    ("depth_stage", ("stage", "depth")),
+    ("channel_width_vs_forcing", ("scatter_",)),
+    ("channel_width_timeseries", ("channel-width_", "timeseries_")),
+]
+
+
+def _fig_path(fname):
+    if not isinstance(fname, (str, Path)):
+        return fname
+    p = Path(fname)
+    if p.parent != Path("."):
+        return p
+    theme = next((t for t, keys in FIG_THEMES if any(k in p.name for k in keys)), "")
+    out = FIG_ROOT / theme / p.name
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 # keep the original plt.savefig once (re-running this cell is safe)
 if "_savefig_white" not in globals():
     _savefig_white = plt.savefig
@@ -1197,6 +1248,7 @@ if "_savefig_white" not in globals():
 
 def _savefig_with_black(fname, *args, black=None, **kwargs):
 
+    fname = _fig_path(fname)
     _savefig_white(fname, *args, **kwargs)
 
     if not (export_black if black is None else black):
@@ -1511,7 +1563,8 @@ pdh_color = "#c04fd0"   # purple
 temp_color = "#2e9e5b"  # green
 
 # daily mean 2 m air temperature (KAN_U daily data, as in the temperature plots above)
-kan_u_day = pd.read_csv("KAN_U_day_new.csv", index_col=0, parse_dates=True)
+from river.config import aws_dir
+kan_u_day = pd.read_csv(aws_dir / "KAN_U_day_new.csv", index_col=0, parse_dates=True)
 t_daily = kan_u_day["t_u"].loc[pdh_start:pdh_end]
 
 fig, ax1 = plt.subplots(figsize=(14, 6))

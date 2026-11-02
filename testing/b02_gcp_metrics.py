@@ -14,7 +14,7 @@
 # ---
 
 # %%
-from river.config import gcps_dir
+from river.config import gcps_dir, aws_dir, fig_dir
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -34,7 +34,7 @@ import shutil
 
 cam = "ilh-cam1-pt"
 direc = gcps_dir
-temp_dat = direc / 'KAN_U_hour_new.csv'
+temp_dat = aws_dir / 'KAN_U_hour_new.csv'  # aws_dir: data/aws (AWS_DIR in setup.sh)
 
 # ==================================================
 # LOAD GCPS DATA (Points 1-4)
@@ -394,7 +394,8 @@ if np.sum(mask) > 1:
 
     plt.legend()
 
-plt.savefig("scat.svg")
+(fig_dir / "gcp_metrics").mkdir(parents=True, exist_ok=True)
+plt.savefig(fig_dir / "gcp_metrics" / "scat.svg")
 plt.show()
 
 # %%

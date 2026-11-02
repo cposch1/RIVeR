@@ -60,17 +60,20 @@ gcps_dir   = _env_path("GCPS_DIR", data_dir / "gcps")
 bathy_dir  = _env_path("BATH_DIR", data_dir / "bathymetry")
 rect_dir   = _env_path("RECT_DIR", data_dir / "orthorectification")
 pts_dir    = _env_path("PTS_DIR", data_dir / "pts")
+aws_dir    = _env_path("AWS_DIR", data_dir / "aws")        # AWS + camera-site logger
 
 piv_dir   = _env_path("PIV_DIR", results_dir / "piv")
 disch_dir = _env_path("DISCH_DIR", results_dir / "discharge")
 dep_dir   = _env_path("DEP_DIR", results_dir / "depth")
+fig_dir   = _env_path("FIG_DIR", results_dir / "figures")  # notebook figures
 
 
 # ---- Ensure directories exist ---------------------------------------------
 
 for p in [
     data_dir, video_dir, frames_dir, gcps_dir, bathy_dir,
-    rect_dir, pts_dir, results_dir, piv_dir, disch_dir, dep_dir
+    rect_dir, pts_dir, aws_dir, results_dir, piv_dir, disch_dir, dep_dir,
+    fig_dir
 ]:
     p.mkdir(parents=True, exist_ok=True)
 
@@ -96,10 +99,12 @@ for name, p in {
     "bathy_dir": bathy_dir,
     "rect_dir": rect_dir,
     "pts_dir": pts_dir,
+    "aws_dir": aws_dir,
     "results_dir": results_dir,
     "piv_dir": piv_dir,
     "disch_dir": disch_dir,
     "dep_dir": dep_dir,
+    "fig_dir": fig_dir,
 }.items():
     logger.info("  %-12s -> %s", name, p)
 

@@ -38,10 +38,12 @@ export GCPS_DIR="$DATA_DIR/gcps"
 export BATH_DIR="$DATA_DIR/bathymetry"
 export RECT_DIR="$DATA_DIR/orthorectification"
 export PTS_DIR="$DATA_DIR/pts"
+export AWS_DIR="$DATA_DIR/aws"          # AWS (KAN_U, KAN_M) + camera-site logger
 
 export PIV_DIR="$RESULTS_DIR/piv"
 export DISCH_DIR="$RESULTS_DIR/discharge"
 export DEP_DIR="$RESULTS_DIR/depth"
+export FIG_DIR="$RESULTS_DIR/figures"   # notebook figures (b01, b02)
 
 # --------------------------------------------------
 # Python path (project root)
@@ -58,8 +60,8 @@ fi
 # --------------------------------------------------
 mkdir -p \
   "$VIDEO_DIR" "$FRAMES_DIR" "$GCPS_DIR" \
-  "$BATH_DIR" "$RECT_DIR" "$PTS_DIR" \
-  "$PIV_DIR" "$DISCH_DIR" "$DEP_DIR"
+  "$BATH_DIR" "$RECT_DIR" "$PTS_DIR" "$AWS_DIR" \
+  "$PIV_DIR" "$DISCH_DIR" "$DEP_DIR" "$FIG_DIR"
 
 # --------------------------------------------------
 # Debug output
@@ -68,5 +70,7 @@ echo "PROJECT_DIR = $PROJECT_DIR"
 echo "SCRIPT_DIR  = $SCRIPT_DIR"
 echo "DATA_DIR    = $DATA_DIR"
 echo "RESULTS_DIR = $RESULTS_DIR"
+echo "AWS_DIR     = $AWS_DIR"
+echo "FIG_DIR     = $FIG_DIR"
 echo "PYTHONPATH  = $PYTHONPATH"
 echo "Environment is ready"
