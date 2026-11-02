@@ -14,20 +14,20 @@
 # ---
 
 # %% [markdown]
-# # Vertical measurements below the modelled surface (a03ad)
+# # Vertical measurements below the modelled surface (a05)
 #
-# Per-frame measurements of `a03ad_vert_meas.py` (`gcps/<cam>/vert_meas/<cam>_vert_meas_<date>_<time>.csv`):
+# Per-frame measurements of `a05_vert_meas.py` (`gcps/<cam>/vert_meas/<cam>_vert_meas_<date>_<time>.csv`):
 # - **water surface (bank)**, **water surface (GCP)** and **stream bed (GCP)**: vertical distance below the
 #   modelled surface (line through the modelled GCP3 and GCP4, central GCP model of b02), in m with the local
 #   vertical scale along the line; also relative to the low / high lines (b02 uncertainty envelope)
 # - **water depth (bank)** = stream bed − water surface (bank), **water depth (GCP)** = stream bed − water surface (GCP)
-#   (frames with both; computed here from the measurements, as in a03ad)
+#   (frames with both; computed here from the measurements, as in a05)
 #
 # Combined with the surface lowering of the central GCP model (GCP4, b02) for levels relative to the surface on
-# 2025-07-01, with the camera-site air temperature (PDH) and, where cross-sections exist, the channel width (a04).
+# 2025-07-01, with the camera-site air temperature (PDH) and, where cross-sections exist, the channel width (a07).
 
 # %%
-from river.config import gcps_dir, bathy_dir
+from river.config import gcps_dir, bathy_dir, aws_dir
 import re
 from pathlib import Path
 import numpy as np
@@ -45,9 +45,8 @@ from scipy.stats import linregress
 # ==================================================
 cam = "ilh-cam1-pt"
 cam_dir = gcps_dir / cam
-vert_dir = cam_dir / "vert_meas"                  # a03ad output
-xs_dir = bathy_dir / cam                          # a04 cross-sections (channel width)
-root_dir = gcps_dir.parent.parent                 # RIVeR/testing (camera-site logger)
+vert_dir = cam_dir / "vert_meas"                  # a05 output
+xs_dir = bathy_dir / cam                          # a07 cross-sections (channel width)
 t0 = pd.Timestamp("2025-07-01 12:00")             # reference: calibration image / first stake frame
 
 KINDS = ["water_surface", "water_surface_gcp", "stream_bed"]
@@ -92,7 +91,7 @@ if not df_long.empty:
     print(df_v["dist_m"].notna().sum().reindex(KINDS + list(DEPTHS)).dropna().astype(int).rename("frames").to_string())
 else:
     df_v = pd.DataFrame()
-    print("No measurements yet -> measure with a03ad_vert_meas.py")
+    print("No measurements yet -> measure with a05_vert_meas.py")
 
 # %%
 # ==================================================
@@ -110,7 +109,7 @@ surf = pd.DataFrame({
 })
 
 # camera-site logger: 10-min values labelled at the interval end -> hourly means at the hour start
-logger = pd.read_csv(root_dir / "hydro_ilh_Table1.dat", skiprows=[0, 2, 3], na_values=["NAN"],
+logger = pd.read_csv(aws_dir / "hydro_ilh_Table1.dat", skiprows=[0, 2, 3], na_values=["NAN"],
                      parse_dates=["TIMESTAMP"], index_col="TIMESTAMP")
 t_cam = logger["AirTemp_C"].shift(-10, freq="min").resample("1h").mean().interpolate(limit=3)
 pdh_h = t_cam.clip(lower=0)                                          # positive degree hours per hour (°C·h)
@@ -259,7 +258,7 @@ if panels:
     plt.show()
 
 # %% [markdown]
-# ## Relation to channel width (a04 cross-sections, same frames)
+# ## Relation to channel width (a07 cross-sections, same frames)
 
 # %%
 widths = {}

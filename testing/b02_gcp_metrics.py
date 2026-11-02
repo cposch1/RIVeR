@@ -463,7 +463,7 @@ plt.show()
 # ## Surface lowering in metres
 #
 # Image positions are converted to surface lowering since installation with the
-# emergence calibration from a03ac (installation image: pole top + known emergence
+# emergence calibration from a04 (installation image: pole top + known emergence
 # at a reference point, P5 or GCP1-4 -> pixels per metre along that point's column):
 # lowering = (y - y_base at installation) / px_per_m.
 # For a GCP reference, y is the modelled GCP position of each stake frame
@@ -473,7 +473,7 @@ plt.show()
 
 # %%
 # ==================================================
-# LOAD EMERGENCE CALIBRATION (a03ac) AND CONVERT TO METRES
+# LOAD EMERGENCE CALIBRATION (a04) AND CONVERT TO METRES
 # ==================================================
 
 emergence_file = cam_dir / f"{cam}_emergence_calibration.csv"
@@ -482,7 +482,7 @@ if not emergence_file.exists():
 
     print(
         f"No emergence calibration yet: {emergence_file}\n"
-        "-> set it in a03ac_orthorectify_pt5.py (Pole Top panel, Save Emergence)"
+        "-> set it in a04_orthorectify_pt5.py (Pole Top panel, Save Emergence)"
     )
 
 else:
@@ -879,12 +879,12 @@ for stake_file in stake_files:
 # - **low / high**: the envelope edges (`env_pct`, default 16th / 84th percentile = ±1 sigma);
 #   low = GCPs move less (plane higher), high = GCPs move more (plane lower)
 #
-# Written next to `_modelling/output` (unchanged, still the default for a03b / a04):
+# Written next to `_modelling/output` (unchanged, still the default for a06 / a07):
 # `_modelling/output_central`, `output_low`, `output_high`, `_modelling/input/df_tls.csv`
 # (fit and slope percentiles per GCP) and `_modelling/gcp_model_envelope.csv` (percentiles per
 # frame and GCP, also of the movement since the first frame, for the vertical estimation).
-# Reprocess a set with `a03b_orthorectify_auto.py ... --gcp-set central|low|high` and
-# `a04_cross_section.py ... --gcp-set central|low|high`.
+# Reprocess a set with `a06_orthorectify_auto.py ... --gcp-set central|low|high` and
+# `a07_cross_section.py ... --gcp-set central|low|high`.
 
 # %%
 # ==================================================
@@ -1802,7 +1802,6 @@ import re
 cmp_t0 = pd.Timestamp("2025-07-01 12:00")     # start: calibration image (= first stake frame)
 cmp_t1 = pd.Timestamp("2025-09-20 12:00")     # end of the season
 cmp_tw = pd.Timestamp("2025-07-17 12:00")     # end of the snow-melt window
-cmp_root = direc.parent.parent                # RIVeR/testing
 cmp_edges = pd.to_datetime([
     "2025-07-01 12:00", "2025-07-17 12:00", "2025-07-24 12:00", "2025-08-05 12:00", "2025-08-14 12:00",
     "2025-08-20 12:00", "2025-08-26 12:00", "2025-09-05 12:00", "2025-09-20 12:00",
@@ -1814,7 +1813,7 @@ CMP_COL = {
 
 # air temperature: camera-site logger (10-min values labelled at the interval end -> hourly means at the hour start)
 logger = pd.read_csv(
-    cmp_root / "hydro_ilh_Table1.dat",
+    aws_dir / "hydro_ilh_Table1.dat",
     skiprows=[0, 2, 3],
     na_values=["NAN"],
     parse_dates=["TIMESTAMP"],
@@ -1822,7 +1821,7 @@ logger = pd.read_csv(
 )
 t_cam = logger["AirTemp_C"].shift(-10, freq="min").resample("1h").mean()
 st_ku = pd.read_csv(temp_dat, index_col=0, parse_dates=True)
-st_km = pd.read_csv(cmp_root / "KAN_M_hour_new.csv", index_col=0, parse_dates=True, low_memory=False)
+st_km = pd.read_csv(aws_dir / "KAN_M_hour_new.csv", index_col=0, parse_dates=True, low_memory=False)
 
 
 def pdh_cum(t, start, end):

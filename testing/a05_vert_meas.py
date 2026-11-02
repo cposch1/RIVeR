@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-a03ad_vert_meas.py — vertical measurements below the modelled surface
+a05_vert_meas.py — vertical measurements below the modelled surface
 
 In every oblique frame, measure vertical distances from the modelled ice
 surface: the thin line through the modelled GCP3 and GCP4 of that frame
@@ -20,7 +20,7 @@ Per measurement (mouse only):
     saved one
 
 Distances are saved in px and in metres. The vertical scale is the emergence
-calibration (px per m at the calibration point, a03ac), scaled along the line
+calibration (px per m at the calibration point, a04), scaled along the line
 by the image scale from the frame's homography (central GCP image positions
 <-> real coordinates): points farther from the camera look smaller. The
 distances are also given relative to the low / high lines (output_low /
@@ -97,7 +97,7 @@ COLUMNS = [
 
 
 # ============================================================
-# Frame index helpers (as in a03ac)
+# Frame index helpers (as in a04)
 # ============================================================
 
 def collect_frame_paths(frame_dir: Path) -> pd.DataFrame:
@@ -162,7 +162,7 @@ def vert_meas_path(cam: str, date: str, time_: str) -> Path:
 
 def model_gcp_file(cam: str, date: str, time_: str, gcp_set: str):
     # modelled GCP image coordinates of a b02 set: same timestamp, else the
-    # first file of that date (as in a04); None if the date has no file
+    # first file of that date (as in a07); None if the date has no file
     folder = gcps_dir / cam / "_modelling" / f"output_{gcp_set}"
     exact = folder / f"{cam}_gcps_img_{date}_{time_}.csv"
     if exact.exists():
@@ -201,7 +201,7 @@ def image_scale_function(gcps_img: np.ndarray, gcps_real: np.ndarray):
 
 
 def load_calibration(cam: str):
-    # emergence calibration (a03ac): px per m at its reference point
+    # emergence calibration (a04): px per m at its reference point
     f = gcps_dir / cam / f"{cam}_emergence_calibration.csv"
     if not f.exists():
         return None
