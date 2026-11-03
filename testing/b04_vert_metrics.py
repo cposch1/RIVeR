@@ -301,3 +301,53 @@ for k in DEPTHS:
 
         plt.tight_layout()
         plt.show()
+
+
+# %% [markdown]
+# ## Freeboard and water level from a07a_xs_frb (central / OLS)
+#
+# `a07a_xs_frb.py` saves per frame and GCP model the water surface at the far bank below the modelled surface (the
+# bank top on the fixed cross-section line): the freeboard (m). Compared with the a05 water surface (bank) below the
+# GCP3–GCP4 line (central model) where it exists; the water level relative to the 2025-07-01 surface uses the central
+# GCP4 lowering (above). The a05 sections above are kept.
+
+# %%
+from river.config import data_dir
+
+frb_rows = []
+for m in ["central", "OLS"]:
+    for f in sorted((data_dir / "xs_frb" / cam / m).glob(f"{cam}_xs_frb_*.csv")):
+        r = pd.read_csv(f).iloc[0]
+        d_, t_ = f.stem.split("_")[-2:]
+        frb_rows.append({"model": m, "timestamp": pd.to_datetime(d_ + t_, format="%Y%m%d%H%M%S"),
+                         "freeboard_m": r["freeboard_m"], "width_m": r["width_m"]})
+frb = pd.DataFrame(frb_rows)
+if not frb.empty:
+    frb["L_m"] = surf["L_m"].reindex(frb["timestamp"], method="nearest", tolerance=pd.Timedelta("13h")).values
+    frb["level_m"] = -(frb["L_m"] + frb["freeboard_m"])          # water surface relative to the 2025-07-01 surface
+    print(frb.groupby("model").size().rename("selections").to_string())
+else:
+    print("No a07a selections yet -> select with a07a_xs_frb.py")
+frb.round(3)
+
+# %%
+if not frb.empty:
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+    for m, c in [("central", COL["surface"]), ("OLS", "0.45")]:
+        g = frb[frb["model"] == m]
+        axes[0].plot(g["timestamp"], g["freeboard_m"], "o", color=c, label=f"a07a freeboard ({m})")
+        if m == "central":
+            axes[1].plot(g["timestamp"], g["level_m"], "o", color=c, label="a07a water level (central)")
+    if not df_v.empty and "water_surface" in df_v["dist_m"].columns:
+        ws = df_v[("dist_m", "water_surface")].dropna()
+        axes[0].plot(ws.index, ws.values, "s", mfc="none", color=COL["water_surface"], label=f"a05 {LABEL['water_surface']}")
+        axes[1].plot(ws.index, -(df_v.loc[ws.index, ("L_m", "")] + ws).values, "s", mfc="none",
+                     color=COL["water_surface"], label=f"a05 {LABEL['water_surface']}")
+    axes[0].set_ylabel("Freeboard: water surface below the modelled surface (m)")
+    axes[1].set_ylabel("Water level relative to the 2025-07-01 surface (m)")
+    for ax in axes:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+    plt.tight_layout()
+    plt.show()
