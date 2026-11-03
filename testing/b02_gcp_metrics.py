@@ -24,6 +24,17 @@ from scipy.stats import linregress
 import os
 import shutil
 
+
+# %%
+# figures: every figure is also saved to FIG_ROOT/<theme>/<name>.png
+FIG_ROOT = fig_dir                                  # results/figures (FIG_DIR in setup.sh)
+FIG_DPI = 200
+
+
+def save_fig(theme, name):
+    out = FIG_ROOT / theme / f"{name}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.gcf().savefig(out, dpi=FIG_DPI, bbox_inches="tight")
 # %% [markdown]
 # ## Load data for metrics
 
@@ -246,6 +257,7 @@ for i in range(1, 5):
             ax.legend()
 
 plt.tight_layout()
+save_fig("gcp_picks", "gcp_picks_spatiotemporal")
 plt.show()
 
 # %% [markdown]
@@ -316,6 +328,7 @@ for i in range(1, 5):
             ax.legend()
 
 plt.tight_layout()
+save_fig("gcp_picks", "gcp_picks_vs_pdh")
 plt.show()
 
 # %% [markdown]
@@ -457,6 +470,7 @@ if np.sum(mask) > 1:
 
     plt.legend()
 
+save_fig("gcp_picks", "pdh_scatter_by_date")
 plt.show()
 
 # %% [markdown]
@@ -571,6 +585,7 @@ if "lowering_m" in df_m:
     plt.grid(True)
     plt.legend()
 
+    save_fig("surface_lowering", "lowering_reference_point_timeseries")
     plt.show()
 
 # %%
@@ -639,6 +654,7 @@ if "lowering_m" in df_m:
 
         plt.legend()
 
+    save_fig("surface_lowering", "lowering_reference_point_vs_pdh")
     plt.show()
 
 # %% [markdown]
@@ -1050,6 +1066,7 @@ for ax, (gcp_id, g) in zip(axes.flatten(), df_env.groupby("gcp_id")):
     ax.legend(fontsize=8)
 
 plt.tight_layout()
+save_fig("gcp_model", "gcp_model_tls_fits")
 plt.show()
 
 # %%
@@ -1184,6 +1201,7 @@ ax.grid(True, alpha=0.3)
 
 fig.suptitle("GCP model: GCP image y = a + b · stake 5 image y, fitted on the July picks", fontsize=13)
 plt.tight_layout()
+save_fig("gcp_model", "gcp_model_documentation")
 plt.show()
 
 # %% [markdown]
@@ -1469,6 +1487,7 @@ for gcp_id in range(1, 5):
     ax.grid(True)
 
 plt.tight_layout()
+save_fig("gcp_model", "modelled_gcps_spatiotemporal")
 plt.show()
 
 # %% [markdown]
@@ -1680,6 +1699,7 @@ for i in range(1, 5):
         ax.legend()
 
 plt.tight_layout()
+save_fig("gcp_model", "modelled_gcps_vs_pdh")
 plt.show()
 
 # %% [markdown]
@@ -1962,6 +1982,7 @@ ax.grid(True, alpha=0.3)
 ax.legend(loc="upper left", fontsize=8.5)
 
 plt.tight_layout()
+save_fig("surface_lowering", "lowering_camera_vs_promice_season")
 plt.show()
 
 # %%
@@ -2109,6 +2130,7 @@ fig.suptitle(f"{cmp_t0:%m-%d %H:%M} → {cmp_tw:%m-%d %H:%M}: KAN_M (1265 m), ca
              f"camera calibration {cmp_pxm:.1f} px/m", fontsize=12)
 
 plt.tight_layout()
+save_fig("surface_lowering", "lowering_window_kanm_camera_kanu")
 plt.show()
 
 # %%
@@ -2170,6 +2192,7 @@ for ax in axes:
     ax.legend(fontsize=8.5, loc="upper left")
 
 plt.tight_layout()
+save_fig("surface_lowering", "lowering_temperature_vs_imagery")
 plt.show()
 
 # %%
@@ -2253,6 +2276,7 @@ ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
 
 fig.suptitle("Fixed degree-day factor vs KAN_U's own lowering per degree-day (documentation)")
 plt.tight_layout()
+save_fig("surface_lowering", "ddf_fixed_vs_kanu_documentation")
 plt.show()
 
 # %%
