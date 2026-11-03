@@ -3336,3 +3336,58 @@ plt.savefig("scatter_depth_vs_pdh.svg", transparent=True)
 plt.show()
 
 # %%
+
+
+# %% [markdown]
+# # Channel width from a07a_xs_frb (central / OLS)
+#
+# `a07a_xs_frb.py` saves per frame and GCP model the far and the close bank on the fixed cross-section line (the line
+# of the a07 picks) and the freeboard; with vertical banks the width is the same at the bank tops and at the water
+# surface. The analysis above still uses the a07 picks (`df_xs`); to run it with the a07a widths, set
+# `df_xs = df_xs_frb["central"]` right after its loading cell.
+
+# %%
+from river.config import data_dir
+
+df_xs_frb = {}
+for m in ["central", "OLS"]:
+    rows = []
+    for f in sorted((data_dir / "xs_frb" / cam / m).glob(f"{cam}_xs_frb_*.csv")):
+        d_, t_ = f.stem.split("_")[-2:]
+        rows.append({"datetime": pd.to_datetime(d_ + t_, format="%Y%m%d%H%M%S"),
+                     "xs_length": float(pd.read_csv(f).iloc[0]["width_m"])})
+    df_xs_frb[m] = pd.DataFrame(rows, columns=["datetime", "xs_length"]).sort_values("datetime").reset_index(drop=True)
+    print(f"a07a {m}: {len(df_xs_frb[m])} cross-sections")
+
+# %%
+fig, ax1 = plt.subplots(figsize=(14, 6))
+fig.patch.set_alpha(0)
+ax1.set_facecolor("none")
+
+ax1.plot(df_xs["datetime"], df_xs["xs_length"], linestyle="None", marker="o",
+         markerfacecolor="none", markeredgecolor="white", label="a07 (OLS model)")
+for m, c in [("central", "deepskyblue"), ("OLS", "orange")]:
+    ax1.plot(df_xs_frb[m]["datetime"], df_xs_frb[m]["xs_length"], linestyle="None", marker="o",
+             color=c, label=f"a07a ({m} model)")
+
+# Axis styling (white)
+ax1.set_xlabel("Date", color="white")
+ax1.set_ylabel("Channel width (m)", color="white")
+ax1.set_ylim(0, 25)
+ax1.set_xlim(start_date, end_date)
+ax1.tick_params(colors="white")
+for spine in ax1.spines.values():
+    spine.set_color("white")
+ax1.grid(True, color="white", alpha=0.2)
+ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+plt.setp(ax1.get_xticklabels(), rotation=90, ha="center", color="white")
+
+# Legend (white text)
+leg = ax1.legend(loc="upper right")
+for text in leg.get_texts():
+    text.set_color("white")
+leg.get_frame().set_facecolor("none")
+
+plt.tight_layout()
+plt.savefig("channel-width_a07a.svg", transparent=True)
+plt.show()

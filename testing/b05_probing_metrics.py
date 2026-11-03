@@ -575,3 +575,88 @@ fig.text(0.01, 0.005, "Orthoimages, picks and bank heights use the current GCP m
 fig.tight_layout(rect=(0, 0.02, 1, 1))
 save_fig(fig, "channel_width_oblique", "channel_width_water_surface")
 plt.show()
+
+
+# %% [markdown]
+# ## 5. Cross-sections at the water level (a07a_xs_frb)
+#
+# Selections of `a07a_xs_frb.py` (`data/xs_frb/<cam>/<model>/`): far and close bank on the fixed line (modelled
+# surface, vertical banks), water surface at the far bank and the same freeboard at the close bank. The cross-section
+# at the water level is the line between the two water points in the image; the camera is fixed, so it can be drawn
+# on any frame. With the probed bathymetry: the ice surface of 2026-04-23 from section 2 (modelled 2026-04-23
+# surface − probed depth, along the left stake line). Overview on the 2025-07-01 image; one figure per selection on
+# its own frame (saved in `xs_water_level/per_date`, not shown). Sections 3 and 4 keep the a07 picks and the a05 bank
+# heights.
+
+# %%
+XS_FRB_MODEL = "central"                            # GCP model of the a07a selections
+frb_files = sorted((data_dir / "xs_frb" / cam / XS_FRB_MODEL).glob(f"{cam}_xs_frb_*.csv"))
+
+
+def water_line(r):
+    # image points of the water line at the far and the close bank (also the first test files)
+    if "img_x1" in r and pd.notna(r["img_x1"]):
+        return (r["img_x1"], r["img_y_water1"]), (r["img_x2"], r["img_y_water2"])
+    return (r["x1"], r["y_water1"]), (r["x2"], r["y_water2"])
+
+
+frb_rows = []
+for f in frb_files:
+    r = pd.read_csv(f).iloc[0]
+    d_, t_ = f.stem.split("_")[-2:]
+    (xa, ya), (xb, yb) = water_line(r)
+    frb_rows.append({"time": pd.to_datetime(d_ + t_, format="%Y%m%d%H%M%S"), "stamp": f"{d_}_{t_}",
+                     "width_m": r["width_m"], "freeboard_m": r["freeboard_m"], "xa": xa, "ya": ya, "xb": xb, "yb": yb})
+frb = pd.DataFrame(frb_rows).sort_values("time").reset_index(drop=True)
+
+# probed bathymetry in the image (section 2), inside the frame
+h07, w07 = img07.shape[:2]
+inside = (x >= 0) & (x <= w07) & (y_ice >= 0) & (y_ice <= h07)
+probe_x, probe_y = np.where(inside, x, np.nan), np.where(inside, y_ice, np.nan)
+
+# one view for all figures: the water lines and the probed bathymetry
+px = np.r_[frb["xa"], frb["xb"], probe_x[inside]]
+py = np.r_[frb["ya"], frb["yb"], probe_y[inside]]
+VIEW_WL = ((max(px.min() - 150, 0), min(px.max() + 150, w07)), (min(py.max() + 120, h07), max(py.min() - 150, 0)))
+print(f"{len(frb)} selections ({XS_FRB_MODEL}): {frb['time'].min():%m-%d %H:%M} -> {frb['time'].max():%m-%d %H:%M}")
+frb[["time", "width_m", "freeboard_m"]].round(3)
+
+# %%
+tn_wl = mdates.date2num(frb["time"])
+norm_wl = colors.Normalize(tn_wl.min(), tn_wl.max())
+cmap_wl = plt.get_cmap("viridis")
+fig, ax = plt.subplots(figsize=(13, 7.5))
+ax.imshow(img07)
+for r, c in zip(frb.itertuples(), cmap_wl(norm_wl(tn_wl))):
+    ax.plot([r.xa, r.xb], [r.ya, r.yb], "-", c=c, lw=1.8, alpha=0.85)
+ax.plot(probe_x, probe_y, "-", c="orangered", lw=1.8, label="probed bathymetry (ice surface 2026-04-23)")
+ax.set_xlim(VIEW_WL[0])
+ax.set_ylim(VIEW_WL[1])
+cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm_wl, cmap=cmap_wl), ax=ax, fraction=0.03, pad=0.01)
+cb.ax.yaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+cb.set_label("cross-section at the water level, 2025")
+ax.legend(loc="lower right", fontsize=9)
+ax.set_title(f"{cam}: cross-sections at the water level (a07a, {XS_FRB_MODEL} model) and the probed bathymetry, "
+             f"on {SURF_FRAME}", fontsize=11)
+ax.axis("off")
+fig.tight_layout()
+save_fig(fig, "xs_water_level", f"xs_water_level_oblique_{XS_FRB_MODEL}")
+plt.show()
+
+# %%
+# one figure per selection on its own frame (saved, not shown)
+for r in frb.itertuples():
+    fig, ax = plt.subplots(figsize=(13, 7.5))
+    ax.imshow(frame_image(r.stamp))
+    ax.plot([r.xa, r.xb], [r.ya, r.yb], "-", c="deepskyblue", lw=2,
+            label=f"water level {r.time:%Y-%m-%d %H:%M}: width {r.width_m:.2f} m, freeboard {r.freeboard_m:.2f} m")
+    ax.plot(probe_x, probe_y, "-", c="orangered", lw=1.8, label="probed bathymetry (ice surface 2026-04-23)")
+    ax.set_xlim(VIEW_WL[0])
+    ax.set_ylim(VIEW_WL[1])
+    ax.legend(loc="lower right", fontsize=9)
+    ax.set_title(f"{cam} {r.time:%Y-%m-%d %H:%M} ({XS_FRB_MODEL} model)", fontsize=11)
+    ax.axis("off")
+    fig.tight_layout()
+    save_fig(fig, "xs_water_level", f"per_date/xs_water_level_{XS_FRB_MODEL}_{r.stamp}")
+    plt.close(fig)
+print(f"{len(frb)} figures in {FIG_ROOT / 'xs_water_level' / 'per_date'}")
